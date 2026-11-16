@@ -42,7 +42,7 @@ lib/
 ## 시작하기
 
 ```bash
-git clone https://github.com/hiting-labs/foodtruck-chatbot.git
+git clone https://github.com/highting-labs/foodtruck-chatbot.git
 cd foodtruck-chatbot
 npm i -g vercel        # Vercel CLI가 없을 때
 vercel link            # Vercel 프로젝트 foodtruck-quote 선택
