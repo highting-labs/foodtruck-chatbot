@@ -81,8 +81,8 @@ const tools = [
         payMethod: { type: 'string', description: '결제 방식: 세금계산서 / 카드 / 현금영수증 / 계좌이체 중 고객이 그걸로 하겠다고 정한 것만. "카드 되나요?"처럼 묻기만 했으면 비우고 note에 "카드 결제 문의"' },
         eventDate: { type: 'string', description: '행사 날짜 YYYY-MM-DD (오늘 날짜 기준으로 바꿔서). 모르면 비움' },
         serveTime: { type: 'string', description: '배식 시간 HH:MM~HH:MM (예: 11:00~14:00). 모르면 비움' },
-        drinkChoice: { type: 'string', description: '커피 세트 음료 구성: 손님이 고른 음료, 또는 고르지 않았으면 "기본 구성(임시) · 통화 때 확인". 커피 세트가 없으면 비움' },
-        callTime: { type: 'string', description: '손님이 말한 통화 편한 시간대(예: 오후 2~5시). 물어봐서 들었을 때만' },
+        drinkChoice: { type: 'string', description: '커피 세트 음료 구성: 손님이 고른 음료, 또는 고르지 않았으면 "기본 구성(임시) · 담당자 확인". 커피 세트가 없으면 비움' },
+        callTime: { type: 'string', description: '손님이 먼저 말한 통화 편한 시간대(예: 오후 2~5시). 묻지 말고 손님이 말했을 때만' },
         isUpdate: { type: 'boolean', description: '이 대화에서 submit_lead를 이미 한 번 불렀고, 정보를 보태려고 다시 부르는 경우에만 true. 처음 부르면 넣지 않음' },
       },
       required: ['contactName', 'phone'],
@@ -402,7 +402,7 @@ module.exports = async function handler(req, res) {
         .replace(/^\s*>\s?/gm, '')                       // 인용 기호(>)도 그대로 보여서 제거
         .replace(/\n{3,}/g, '\n\n')
         .trim();
-      // 조율·확인이 필요한 답은 전화 상담으로 이어지게: 아직 번호를 안 받았고 이번 대화에서 연락처를 물은 적도 없으면 한 줄 붙임
+      // 조율·확인이 필요한 답은 접수로 이어지게(전화로 넘기지 않음): 아직 번호를 안 받았고 이번 대화에서 연락처를 물은 적도 없으면 한 줄 붙임
       // (규칙 글만으로는 "인원·지역 알려 주세요"로 끝나는 경우가 있어 서버에서 보장)
       const userTexts = convo.filter((m) => m.role === 'user' && typeof m.content === 'string').map((m) => m.content).join(' ');
       const hasPhone = /01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/.test(userTexts) || meta.lead;
@@ -410,7 +410,16 @@ module.exports = async function handler(req, res) {
       // "담당자 확인" 말이 목록 줄(- · •)에만 있으면 원칙 설명 같은 글이라 붙이지 않음(내부 지침 질문 답 끝에 연락처 요청이 붙던 일)
       const consultLine = reply.split('\n').some((l) => /담당자.{0,20}(확인|조율)/.test(l) && !/^\s*([-·•*]|\d+\.)\s/.test(l));
       if (!hasPhone && !askedBefore && consultLine && !/연락처|1877-6901/.test(reply)) {
-        reply += '\n\n담당자가 전화로 바로 맞춰 드릴 수 있게, 성함(회사명)·연락처와 통화 편한 시간을 알려 주시겠어요? 바로 통화를 원하시면 대표번호 **1877-6901**로 주셔도 돼요.';
+        reply += '\n\n담당자가 확인해서 연락드릴 수 있게, 성함(회사명)과 연락처를 남겨 주시겠어요?';
+      }
+      // 연락처 요청은 한 대화에 한 번만: 앞 답에서 이미 물었고 아직 번호가 없으면 이번 답의 연락처 요청 줄을 뺌
+      // (매뉴얼에 "한 번만"이 있어도 다시 계산할 때마다 또 묻던 일 — 손님이 진행 의사를 밝힌 답은 예외)
+      const ASK_LINE = /(성함|회사명|이름).{0,20}(연락처|번호)/;
+      const askedContact = messages.some((m) => m.role === 'assistant' && ASK_LINE.test(String(m.content || '')));
+      const lastUser = String((convo.filter((m) => m.role === 'user' && typeof m.content === 'string').pop() || {}).content || '');
+      const wantsGo = /진행|예약|확정|계약|할게|할께|하겠|접수|연락/.test(lastUser);
+      if (!hasPhone && askedContact && !wantsGo) {
+        reply = reply.split('\n').filter((l) => !ASK_LINE.test(l)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
       }
       // 이번 요청에서 접수했으면 답 끝에 정해진 접수 표시 줄(다음 턴의 '이미 접수됨' 판단 근거 + 손님에게도 분명히)
       reply = reply.replace(LEAD_MARK_ANY, '').replace(/\n{3,}/g, '\n\n').trim();   // 표시 줄은 서버만 붙임
