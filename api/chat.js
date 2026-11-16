@@ -417,9 +417,15 @@ module.exports = async function handler(req, res) {
       const ASK_LINE = /(성함|회사명|이름).{0,20}(연락처|번호)/;
       const askedContact = messages.some((m) => m.role === 'assistant' && ASK_LINE.test(String(m.content || '')));
       const lastUser = String((convo.filter((m) => m.role === 'user' && typeof m.content === 'string').pop() || {}).content || '');
-      const wantsGo = /진행|예약|확정|계약|할게|할께|하겠|접수|연락/.test(lastUser);
+      // 앞 답이 진행 질문(NEXT_STEP)으로 끝났고 손님이 "네/그걸로" 등으로 받았으면 진행 의사로 봄
+      const NEXT_STEP = '이 구성으로 진행하실까요? 메뉴나 인원을 바꾸시려면 말씀해 주세요.';
+      const prevBot = String((messages.filter((m) => m.role === 'assistant').pop() || {}).content || '');
+      const wantsGo = /진행|예약|확정|계약|할게|할께|하겠|접수|연락/.test(lastUser)
+        || (prevBot.includes(NEXT_STEP) && /^\s*(네|넵|예|응|ㅇㅇ|ㅇㅋ|오케이|좋|그걸로|이걸로|그렇게|그래)/.test(lastUser));
       if (!hasPhone && askedContact && !wantsGo) {
         reply = reply.split('\n').filter((l) => !ASK_LINE.test(l)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+        // 연락처를 다시 묻지 않는 대신, 견적만 보여 주고 끝나 손님이 다음에 뭘 할지 모르는 일이 없게 진행 질문으로 마무리
+        if (/합계/.test(reply) && !/[?？]\s*$/.test(reply)) reply += '\n\n' + NEXT_STEP;
       }
       // 이번 요청에서 접수했으면 답 끝에 정해진 접수 표시 줄(다음 턴의 '이미 접수됨' 판단 근거 + 손님에게도 분명히)
       reply = reply.replace(LEAD_MARK_ANY, '').replace(/\n{3,}/g, '\n\n').trim();   // 표시 줄은 서버만 붙임
