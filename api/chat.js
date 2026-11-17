@@ -288,6 +288,7 @@ module.exports = async function handler(req, res) {
     // 이 대화에서 현수막 위치를 이미 물었으면(앞선 챗봇 답에 그 질문) 계산기의 "현수막 한 번 물어보세요" 안내를 빼고 넘김 — 매번 다시 묻던 일
     const askedBanner = messages.some((m) => m.role === 'assistant' && /좌·우 옆면|X배너에도/.test(m.content));
     let leadSent = messages.some((m) => m.role === 'assistant' && endsWithLeadMark(m.content));   // 이미 접수한 대화면 다음 접수는 '추가 정보'로
+    const leadBefore = leadSent;   // 이번 요청 전에 이미 접수된 대화인지(견적 변경 자동 전달 판단용)
     // 이미 접수한 대화면 모델에게도 알림(앞 턴의 도구 호출은 모델에 가지 않아 "접수 안 됐다"고 단정하던 일)
     const leadNote = leadSent ? [{ type: 'text', text: '[봇에게] 이 대화에서는 이미 상담 접수가 됐어요(담당자에게 전달됨). 손님이 접수 여부를 물으면 "네, 접수돼 있어요"라고 답하고, 정보를 보태면 submit_lead로 추가하세요. 내부 도구 이름은 말하지 않습니다.' }] : [];
     // 도구 호출이 나오면 실행하고 다시 물어보는 루프 (최대 3회)
@@ -435,6 +436,29 @@ module.exports = async function handler(req, res) {
         // 연락처를 다시 묻지 않는 대신, 견적만 보여 주고 끝나 손님이 다음에 뭘 할지 모르는 일이 없게 진행 질문으로 마무리
         // 모델이 같은 진행 질문을 이미 썼으면(마침표로 끝나 '?' 판정에 안 걸림) 다시 붙이지 않음
         if (/합계/.test(reply) && !/[?？]\s*$/.test(reply) && !/진행하실까요/.test(reply)) reply += '\n\n' + NEXT_STEP;
+      }
+      // 이미 접수한 대화에서 메뉴·수량을 바꿔 다시 계산했는데 모델이 추가 접수를 안 했으면, 담당자 문자에 옛 견적이 남지 않게 서버가 대신 보냄
+      // (실제 상담 시험: 120개로 접수 → "140개로 견적 부탁"에 다시 계산만 하고 접수 갱신 없음)
+      const lastCalc = calcs.filter((c) => c && c.status === 'ok').pop();
+      // 부가세만 묻는 등 같은 금액으로 다시 계산한 경우는 보내지 않음(앞서 안내한 합계 줄 중 숫자가 같은 게 있으면)
+      const digits = (s) => String(s || '').replace(/[^\d~]/g, '');
+      const prevSums = messages.filter((m) => m.role === 'assistant').map((m) => String(m.content || '')).join('\n').match(/합계[^\n]*/g) || [];
+      const sameQuote = lastCalc && prevSums.some((l) => digits(l) === digits(lastCalc.summaryLine));
+      if (leadBefore && !meta.lead && lastCalc && !sameQuote) {
+        const phones = userTexts.match(/01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/g) || [];
+        const input = {
+          contactName: '(앞 접수와 같은 손님)',
+          phone: phones.length ? phones[phones.length - 1] : '-',
+          menu: (lastCalc.items || []).map((i) => `${i.name} ${i.servings}`).join(', '),
+          region: lastCalc.region || '',
+          note: '손님이 접수 뒤 견적을 바꿈(챗봇이 바뀐 견적으로 자동 전달)',
+          isUpdate: true,
+        };
+        const botTexts = [...messages.filter((m) => m.role === 'assistant').map((m) => m.content), ...preTexts];
+        const out = await handleLead(input, { botTexts, calcs });
+        meta.tools.push({ name: 'submit_lead', input, status: out.status, auto: true });
+        meta.lead = true;
+        leadKind = leadKind || 'update';
       }
       // 이번 요청에서 접수했으면 답 끝에 정해진 접수 표시 줄(다음 턴의 '이미 접수됨' 판단 근거 + 손님에게도 분명히)
       reply = reply.replace(LEAD_MARK_ANY, '').replace(/\n{3,}/g, '\n\n').trim();   // 표시 줄은 서버만 붙임
