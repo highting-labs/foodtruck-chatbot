@@ -63,11 +63,11 @@ const tools = [
   },
   {
     name: 'submit_lead',
-    description: '고객이 상담을 원하거나 연락처를 남겼을 때 호출한다. 담당자에게 상담 리드를 문자로 전달하고, 보드에서 행사·견적서를 만들 때 이 값을 그대로 쓴다. 반드시 성함(회사명)과 연락처를 받은 뒤에만 호출한다. 이후 견적서 정보(회사명·담당자·이메일·주소·결제방식 등)를 더 받으면 지금까지 받은 값 전부를 담아 isUpdate:true로 한 번 더 호출한다.',
+    description: '고객이 상담을 원하거나 연락처를 남겼을 때 호출한다. 담당자에게 상담 리드를 문자로 전달하고, 보드에서 행사·견적서를 만들 때 이 값을 그대로 쓴다. 연락처(전화번호)를 받으면 바로 호출한다. 성함(회사명)을 아직 모르면 contactName에 "미기재"로 넣고 호출한 뒤 성함을 한 번만 묻는다. 이후 견적서 정보(회사명·담당자·이메일·주소·결제방식 등)를 더 받으면 지금까지 받은 값 전부를 담아 isUpdate:true로 한 번 더 호출한다.',
     input_schema: {
       type: 'object',
       properties: {
-        contactName: { type: 'string', description: '담당자명 또는 회사명' },
+        contactName: { type: 'string', description: '담당자명 또는 회사명. 아직 모르면 "미기재"' },
         phone: { type: 'string', description: '연락처(전화번호)' },
         region: { type: 'string', description: '행사 지역(있으면)' },
         menu: { type: 'string', description: '문의 메뉴·인분 요약(있으면)' },
@@ -414,18 +414,27 @@ module.exports = async function handler(req, res) {
       }
       // 연락처 요청은 한 대화에 한 번만: 앞 답에서 이미 물었고 아직 번호가 없으면 이번 답의 연락처 요청 줄을 뺌
       // (매뉴얼에 "한 번만"이 있어도 다시 계산할 때마다 또 묻던 일 — 손님이 진행 의사를 밝힌 답은 예외)
-      const ASK_LINE = /(성함|회사명|이름).{0,20}(연락처|번호)/;
-      const askedContact = messages.some((m) => m.role === 'assistant' && ASK_LINE.test(String(m.content || '')));
+      // 모델이 "연락처만 남겨 주시겠어요?", 목록 줄 "- 연락처(휴대폰 번호)"처럼 모양을 바꿔 다시 묻던 일 → 연락처를 말하는 문장이면 모양과 상관없이 봄
+      const CONTACT = /연락처|휴대폰\s?번호|핸드폰\s?번호|전화\s?번호/;
+      const askedContact = messages.some((m) => m.role === 'assistant' && CONTACT.test(String(m.content || '')));
       const lastUser = String((convo.filter((m) => m.role === 'user' && typeof m.content === 'string').pop() || {}).content || '');
       // 앞 답이 진행 질문(NEXT_STEP)으로 끝났고 손님이 "네/그걸로" 등으로 받았으면 진행 의사로 봄
       const NEXT_STEP = '이 구성으로 진행하실까요? 메뉴나 인원을 바꾸시려면 말씀해 주세요.';
       const prevBot = String((messages.filter((m) => m.role === 'assistant').pop() || {}).content || '');
-      const wantsGo = /진행|예약|확정|계약|할게|할께|하겠|접수|연락/.test(lastUser)
+      // "진행하게 되면 연락드리겠습니다"·"문의드리려고 연락드렸습니다" 같은 말은 진행 의사가 아님 → 분명한 말만
+      const wantsGo = /(진행|예약|계약)\s?(할게|할께|하겠|해\s?주|해\s?줘|부탁|하고\s?싶|원해|할래|합시다)|예약할|확정\s?(할게|할께|하겠|해\s?주|이죠|인가요|으로\s?할)|접수\s?(해|부탁)|그걸로\s?할|이걸로\s?할/.test(lastUser)
         || (prevBot.includes(NEXT_STEP) && /^\s*(네|넵|예|응|ㅇㅇ|ㅇㅋ|오케이|좋|그걸로|이걸로|그렇게|그래)/.test(lastUser));
       if (!hasPhone && askedContact && !wantsGo) {
-        reply = reply.split('\n').filter((l) => !ASK_LINE.test(l)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+        // 연락처를 말하는 목록 줄은 통째로, 일반 줄은 그 문장만 빼고 나머지 문장은 남김
+        reply = reply.split('\n').map((l) => {
+          if (!CONTACT.test(l)) return l;
+          if (/^\s*([-·•*]|\d+\.)\s/.test(l)) return null;
+          const rest = l.split(/(?<=[.?!])\s+/).filter((s) => !CONTACT.test(s)).join(' ').trim();
+          return rest || null;
+        }).filter((l) => l !== null).join('\n').replace(/\n{3,}/g, '\n\n').trim();
         // 연락처를 다시 묻지 않는 대신, 견적만 보여 주고 끝나 손님이 다음에 뭘 할지 모르는 일이 없게 진행 질문으로 마무리
-        if (/합계/.test(reply) && !/[?？]\s*$/.test(reply)) reply += '\n\n' + NEXT_STEP;
+        // 모델이 같은 진행 질문을 이미 썼으면(마침표로 끝나 '?' 판정에 안 걸림) 다시 붙이지 않음
+        if (/합계/.test(reply) && !/[?？]\s*$/.test(reply) && !/진행하실까요/.test(reply)) reply += '\n\n' + NEXT_STEP;
       }
       // 이번 요청에서 접수했으면 답 끝에 정해진 접수 표시 줄(다음 턴의 '이미 접수됨' 판단 근거 + 손님에게도 분명히)
       reply = reply.replace(LEAD_MARK_ANY, '').replace(/\n{3,}/g, '\n\n').trim();   // 표시 줄은 서버만 붙임
@@ -446,6 +455,11 @@ module.exports = async function handler(req, res) {
       return res.status(200).json(picker ? { reply, usage, picker } : { reply, usage });
     }
 
+    // 도구를 여러 번 부르다 최종 답을 못 받고 끝난 경우: 이번 요청에서 이미 접수했으면 손님이 다시 보내 중복 접수되지 않게 접수됐다고 알림
+    if (leadKind) {
+      const done = english ? 'Your request has been received. Our staff will contact you soon.' : '접수는 됐어요. 담당자가 확인해서 곧 연락드릴게요.';
+      return res.status(200).json({ reply: done + '\n\n' + (english ? LEAD_MARK.en : leadKind === 'update' ? LEAD_MARK.koUpdate : LEAD_MARK.ko) });
+    }
     return res.status(200).json({ reply: '죄송해요, 잠시 후 다시 시도해 주세요.' });
   } catch (e) {
     return res.status(500).json({ error: String(e) });
