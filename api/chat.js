@@ -63,11 +63,11 @@ const tools = [
   },
   {
     name: 'submit_lead',
-    description: '고객이 상담을 원하거나 연락처를 남겼을 때 호출한다. 담당자에게 상담 리드를 문자로 전달하고, 보드에서 행사·견적서를 만들 때 이 값을 그대로 쓴다. 반드시 성함(회사명)과 연락처를 받은 뒤에만 호출한다. 이후 견적서 정보(회사명·담당자·이메일·주소·결제방식 등)를 더 받으면 지금까지 받은 값 전부를 담아 isUpdate:true로 한 번 더 호출한다.',
+    description: '고객이 상담을 원하거나 연락처를 남겼을 때 호출한다. 담당자에게 상담 리드를 문자로 전달하고, 보드에서 행사·견적서를 만들 때 이 값을 그대로 쓴다. 연락처(전화번호)를 받으면 바로 호출한다. 성함(회사명)을 아직 모르면 contactName에 "미기재"로 넣고 호출한 뒤 성함을 한 번만 묻는다. 이후 견적서 정보(회사명·담당자·이메일·주소·결제방식 등)를 더 받으면 지금까지 받은 값 전부를 담아 isUpdate:true로 한 번 더 호출한다.',
     input_schema: {
       type: 'object',
       properties: {
-        contactName: { type: 'string', description: '담당자명 또는 회사명' },
+        contactName: { type: 'string', description: '담당자명 또는 회사명. 아직 모르면 "미기재"' },
         phone: { type: 'string', description: '연락처(전화번호)' },
         region: { type: 'string', description: '행사 지역(있으면)' },
         menu: { type: 'string', description: '문의 메뉴·인분 요약(있으면)' },
@@ -174,23 +174,78 @@ function quoteLine(modelQuote, botTexts, calcs = []) {
 // 상담 리드를 담당자에게 문자로 발송 (ctx: 날짜 보정 표시, 손님에게 보여 준 챗봇 글)
 async function handleLead(input, ctx = {}) {
   const p = input || {};
-  const quote = quoteLine(p.quote, ctx.botTexts || [], ctx.calcs || []);
+  const calcs = ctx.calcs || [], history = ctx.history || [];
+  const won = (n) => Math.round(n).toLocaleString('ko-KR');
+  // 손님에게 마지막으로 보여 준 합계(이번 요청 전) — 추가 접수의 견적 줄·변경 줄에 씀
+  // 합계가 나온 가장 최근 답의 합계 줄 전부(손님이 두 안을 비교한 답이면 둘 다) — 마지막 줄 하나만 보면 고르지 않은 안을 이전 견적으로 잡던 일
+  let lastSums = [];
+  for (let i = history.length - 1; i >= 0 && !lastSums.length; i--) {
+    lastSums = String(history[i] || '').split('\n').filter((x) => /^\s*\*\*합계/.test(x))
+      .map((l) => amounts(l.replace(/\(.*$/, '')).slice(0, 2)).filter((n) => n.length);
+  }
+  const lastSum = lastSums.length ? lastSums[lastSums.length - 1] : null;
+  // 다시 계산하지 않은 추가 접수(이메일만 보탬·삭제 요청 등): 챗봇이 적은 금액과 맞는 합계가 있으면 그대로, 없을 때만 마지막 합계 — "견적 확인 필요"가 잘못 붙던 일
+  const baseQuote = quoteLine(p.quote, ctx.botTexts || [], calcs);
+  const quote = p.isUpdate && !calcs.length && lastSum && /견적 확인 필요/.test(baseQuote) ? amountText(lastSum) : baseQuote;
   const when = [p.eventDate, p.serveTime].filter(Boolean).join(' ');
   const org = [p.company, p.contactPerson].filter(Boolean).join(' ');
   const who = [org, p.contactName && !org.includes(p.contactName) ? p.contactName : ''].filter(Boolean).join(' / ');   // 회사명이 있어도 손님 이름이 빠지지 않게
+  const auto = p.contactName === '(앞 접수와 같은 손님)';
+
+  // 담당자가 문자 첫머리만 보고 무슨 건인지·무엇을 조심할지 알게(페르소나 시험: 삭제 요청·남의 번호가 문의 줄에 묻힘)
+  const nth = history.filter((h) => endsWithLeadMark(h)).length;   // 이 대화에서 앞서 접수된 횟수
+  const tags = [auto ? '견적 변경(자동 전달)' : p.isUpdate ? '정보 추가' : '신규'];
+  if (p.contactName === '미기재' && !org) tags.push('이름 미확인');
+  if (/최소 금액 미달/.test(quote)) tags.push('최소 금액 미달');
+  const allText = Object.values(p).filter((v) => typeof v === 'string').join(' ');
+  const warn = [];
+  if (/개인정보\s*삭제|삭제\s*요청|번호\s*(지워|삭제)/.test(p.note || '')) warn.push('⚠ 개인정보 삭제 요청 — 연락 전 처리 여부 확인');
+  if (/본인 번호 아님/.test(p.note || '')) warn.push('⚠ 본인 번호 아님(손님 말) — 이 번호로 연락해도 되는지 확인');
+  if (/손님 글·확인 안 됨/.test(allText)) warn.push('⚠ 손님이 쓴 링크·머리글 포함 — 내용 확인');
+  if (ctx.dateNote) warn.push('⚠ 행사 날짜 연도 확인');
+  if (/견적 확인 필요/.test(quote)) warn.push('⚠ 챗봇이 적은 금액과 계산 결과가 다름 — 견적 확인');
+  // 추가 접수에서 견적이 바뀌었으면 이전 → 지금
+  const lc = [...calcs].reverse().find((c) => c && c.status === 'ok');
+  const nowNums = lc ? (lc.mode === 'range' ? [lc.rangeLow, lc.rangeHigh] : [lc.subtotal]) : null;
+  const fmt = (ns) => (ns.length > 1 ? '약 ' : '') + ns.map(won).join('~') + '원';
+  // 이번 견적이 앞서 보여 준 안 중 하나와 같으면 변경 아님(날짜만 고친 추가 접수 등)
+  const sameAsShown = nowNums && lastSums.some((n) => fmt(n) === fmt(nowNums));
+  const change = p.isUpdate && lastSum && nowNums && !sameAsShown ? `변경: 견적 ${lastSums.length > 1 ? '(앞서 비교한 안 중) ' : ''}${fmt(lastSum)} → ${fmt(nowNums)}` : '';
+  if (change && !auto) tags[0] = '견적 변경';
+  // 견적서 칸 중 전기·출력물은 계산에 넣은 조건으로 고정 칸(손님이 말 안 했으면 확인 필요)
+  const ci = (lc && lc._input) || {};
+  const power = !lc ? '' : ci.powerAvailable === false || (lc.costs && lc.costs.자가발전기 > 0) ? '없음(자가발전기 포함)' : ci.powerAvailable === true ? '있음' : '확인 필요(있다고 보고 계산)';
+  const banner = !lc ? '' : Array.isArray(ci.sideBanners) ? (ci.sideBanners.length ? `상단·중앙 + ${ci.sideBanners.join('·')}` : '상단·중앙만') : '확인 필요(상단·중앙 기본)';
+  const missing = [];
+  if (!p.company) missing.push('행사명·회사');
+  if (!p.email) missing.push('이메일');
+  if (!p.eventDate && !p.datetime) missing.push('날짜');
+  if (!p.serveTime) missing.push('시간');
+  if (!p.address) missing.push('주소');
+  if (!p.payMethod) missing.push('결제방식');
+  if (!p.menu && !lc) missing.push('메뉴·인분');
+  if (!lc || power.startsWith('확인')) missing.push('전기');
+  if (!lc || banner.startsWith('확인')) missing.push('출력물(현수막)');
+
   const lines = [
-    p.isUpdate ? '[푸드트럭하우스 챗봇 상담 · 추가 정보]' : '[푸드트럭하우스 챗봇 상담 신청]',
+    p.isUpdate ? `[푸드트럭하우스 챗봇 상담 · 추가 정보${nth ? ` ${nth}차` : ''}]` : '[푸드트럭하우스 챗봇 상담 신청]',
+    `상태: ${tags.join(' · ')}`,
+    ...warn,
+    ...(change ? [change] : []),
+    ...(!auto && missing.length ? [`견적서 빈 칸: ${missing.join(', ')}`] : []),
     `담당자/회사: ${who || '-'}`,
     `연락처: ${p.phone || '-'}`,
   ];
   if (p.email) lines.push(`이메일: ${p.email}`);
   if (when) lines.push(`날짜·시간: ${when}${ctx.dateNote || ''}`);
   if (p.address) lines.push(`주소: ${p.address}`);
-  if (p.callTime) lines.push(`통화 편한 시간: ${p.callTime}`);
+  if (p.callTime) lines.push(`손님이 말한 통화 시간: ${p.callTime}`);
   if (p.payMethod) lines.push(`결제: ${p.payMethod}`);
   if (p.region) lines.push(`지역: ${p.region}`);
   if (p.menu) lines.push(`메뉴/인분: ${p.menu}`);
   if (p.drinkChoice) lines.push(`음료 구성: ${p.drinkChoice}`);
+  if (power) lines.push(`전기: ${power}`);
+  if (banner) lines.push(`현수막: ${banner}`);
   if (quote) lines.push(`견적: ${quote}`);
   const norm = (s) => String(s).replace(/\s/g, '').replace(/\d{4}-/g, '');   // 연도 보정으로 연도만 달라진 건 같은 글로 봄
   if (p.datetime && (!when || norm(p.datetime) !== norm(when))) lines.push(`일정: ${p.datetime}`);   // 날짜·시간 줄과 같은 글일 때만 생략(여러 날 일정 등은 남김)
@@ -288,6 +343,7 @@ module.exports = async function handler(req, res) {
     // 이 대화에서 현수막 위치를 이미 물었으면(앞선 챗봇 답에 그 질문) 계산기의 "현수막 한 번 물어보세요" 안내를 빼고 넘김 — 매번 다시 묻던 일
     const askedBanner = messages.some((m) => m.role === 'assistant' && /좌·우 옆면|X배너에도/.test(m.content));
     let leadSent = messages.some((m) => m.role === 'assistant' && endsWithLeadMark(m.content));   // 이미 접수한 대화면 다음 접수는 '추가 정보'로
+    const leadBefore = leadSent;   // 이번 요청 전에 이미 접수된 대화인지(견적 변경 자동 전달 판단용)
     // 이미 접수한 대화면 모델에게도 알림(앞 턴의 도구 호출은 모델에 가지 않아 "접수 안 됐다"고 단정하던 일)
     const leadNote = leadSent ? [{ type: 'text', text: '[봇에게] 이 대화에서는 이미 상담 접수가 됐어요(담당자에게 전달됨). 손님이 접수 여부를 물으면 "네, 접수돼 있어요"라고 답하고, 정보를 보태면 submit_lead로 추가하세요. 내부 도구 이름은 말하지 않습니다.' }] : [];
     // 도구 호출이 나오면 실행하고 다시 물어보는 루프 (최대 3회)
@@ -339,15 +395,19 @@ module.exports = async function handler(req, res) {
             // 영어 손님이면 장소 안내 자리에 정해 둔 영어 문구를 넣음(매뉴얼 지시만으로는 한국어 원문이 가끔 그대로 나감)
             if (english && out.venueNoticeEn) out = Object.assign({}, out, { venueNotice: out.venueNoticeEn });
             if (askedBanner && Array.isArray(out.notes)) out = Object.assign({}, out, { notes: out.notes.filter((n) => !/현수막 위치를 아직 안 물어봤어요/.test(n)) });
-            calcs.push(out);   // 같은 요청의 접수 문자 견적 줄에 씀
+            calcs.push(Object.assign({}, out, { _input: cin }));   // 같은 요청의 접수 문자 견적 줄에 씀(전기·현수막 칸에 쓰려고 넣은 조건도 같이)
             meta.tools.push({ name: 'calculate_quote', input: cin, status: out.status, subtotal: out.subtotal, rangeLow: out.rangeLow, rangeHigh: out.rangeHigh, mode: out.mode, region: out.region, items: out.items, costs: out.costs, banners: out.banners, capacity: out.capacity });   // 보드에서 견적서 품목 채울 때 씀
           } else if (tu.name === 'submit_lead') {
             const input = cleanLead(tu.input);   // 손님이 넣은 값 정리(문자·시트·보드 기록 모두 이 값)
             if (leadSent) input.isUpdate = true;   // 모델이 isUpdate를 빠뜨려 같은 손님이 '상담 신청'으로 여러 번 들어가던 일 막기
             leadSent = true;
+            const origDate = input.eventDate;
             const fd = fixPastDate(input.eventDate); input.eventDate = fd.date;
-            const botTexts = [...messages.filter((m) => m.role === 'assistant').map((m) => m.content), ...preTexts];
-            out = await handleLead(input, { dateNote: fd.note, botTexts, calcs });
+            // "일정" 칸(손님 말 그대로)에도 같은 날짜가 있으면 같이 고침 — 한 문자에 연도가 두 가지로 나오던 일
+            if (fd.note && fd.date !== origDate && typeof input.datetime === 'string') input.datetime = input.datetime.split(origDate).join(fd.date);
+            const history = messages.filter((m) => m.role === 'assistant').map((m) => m.content);
+            const botTexts = [...history, ...preTexts];
+            out = await handleLead(input, { dateNote: fd.note, botTexts, calcs, history });
             // 날짜가 있으면 그날 직영 여유(보드 '챗봇 상담'에 🟢/🟡/🟠로 표시 + 이후 응대 깊이)
             // 전기 없다는 말이 대화에 있었으면 발전기까지 따져서 판단 (예전엔 빠져서 발전기 모자란 날도 '여유'로 나왔음)
             const allUser = convo.filter((m) => m.role === 'user' && typeof m.content === 'string').map((m) => m.content).join(' ');
@@ -414,18 +474,50 @@ module.exports = async function handler(req, res) {
       }
       // 연락처 요청은 한 대화에 한 번만: 앞 답에서 이미 물었고 아직 번호가 없으면 이번 답의 연락처 요청 줄을 뺌
       // (매뉴얼에 "한 번만"이 있어도 다시 계산할 때마다 또 묻던 일 — 손님이 진행 의사를 밝힌 답은 예외)
-      const ASK_LINE = /(성함|회사명|이름).{0,20}(연락처|번호)/;
-      const askedContact = messages.some((m) => m.role === 'assistant' && ASK_LINE.test(String(m.content || '')));
+      // 모델이 "연락처만 남겨 주시겠어요?", 목록 줄 "- 연락처(휴대폰 번호)"처럼 모양을 바꿔 다시 묻던 일 → 연락처를 말하는 문장이면 모양과 상관없이 봄
+      const CONTACT = /연락처|휴대폰\s?번호|핸드폰\s?번호|전화\s?번호/;
+      const askedContact = messages.some((m) => m.role === 'assistant' && CONTACT.test(String(m.content || '')));
       const lastUser = String((convo.filter((m) => m.role === 'user' && typeof m.content === 'string').pop() || {}).content || '');
       // 앞 답이 진행 질문(NEXT_STEP)으로 끝났고 손님이 "네/그걸로" 등으로 받았으면 진행 의사로 봄
       const NEXT_STEP = '이 구성으로 진행하실까요? 메뉴나 인원을 바꾸시려면 말씀해 주세요.';
       const prevBot = String((messages.filter((m) => m.role === 'assistant').pop() || {}).content || '');
-      const wantsGo = /진행|예약|확정|계약|할게|할께|하겠|접수|연락/.test(lastUser)
+      // "진행하게 되면 연락드리겠습니다"·"문의드리려고 연락드렸습니다" 같은 말은 진행 의사가 아님 → 분명한 말만
+      const wantsGo = /(진행|예약|계약)\s?(할게|할께|하겠|해\s?주|해\s?줘|부탁|하고\s?싶|원해|할래|합시다)|예약할|확정\s?(할게|할께|하겠|해\s?주|이죠|인가요|으로\s?할)|접수\s?(해|부탁)|그걸로\s?할|이걸로\s?할/.test(lastUser)
         || (prevBot.includes(NEXT_STEP) && /^\s*(네|넵|예|응|ㅇㅇ|ㅇㅋ|오케이|좋|그걸로|이걸로|그렇게|그래)/.test(lastUser));
       if (!hasPhone && askedContact && !wantsGo) {
-        reply = reply.split('\n').filter((l) => !ASK_LINE.test(l)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+        // 연락처를 말하는 목록 줄은 통째로, 일반 줄은 그 문장만 빼고 나머지 문장은 남김
+        reply = reply.split('\n').map((l) => {
+          if (!CONTACT.test(l)) return l;
+          if (/^\s*([-·•*]|\d+\.)\s/.test(l)) return null;
+          const rest = l.split(/(?<=[.?!])\s+/).filter((s) => !CONTACT.test(s)).join(' ').trim();
+          return rest || null;
+        }).filter((l) => l !== null).join('\n').replace(/\n{3,}/g, '\n\n').trim();
         // 연락처를 다시 묻지 않는 대신, 견적만 보여 주고 끝나 손님이 다음에 뭘 할지 모르는 일이 없게 진행 질문으로 마무리
-        if (/합계/.test(reply) && !/[?？]\s*$/.test(reply)) reply += '\n\n' + NEXT_STEP;
+        // 모델이 같은 진행 질문을 이미 썼으면(마침표로 끝나 '?' 판정에 안 걸림) 다시 붙이지 않음
+        if (/합계/.test(reply) && !/[?？]\s*$/.test(reply) && !/진행하실까요/.test(reply)) reply += '\n\n' + NEXT_STEP;
+      }
+      // 이미 접수한 대화에서 메뉴·수량을 바꿔 다시 계산했는데 모델이 추가 접수를 안 했으면, 담당자 문자에 옛 견적이 남지 않게 서버가 대신 보냄
+      // (실제 상담 시험: 120개로 접수 → "140개로 견적 부탁"에 다시 계산만 하고 접수 갱신 없음)
+      const lastCalc = calcs.filter((c) => c && c.status === 'ok').pop();
+      // 부가세만 묻는 등 같은 금액으로 다시 계산한 경우는 보내지 않음(앞서 안내한 합계 줄 중 숫자가 같은 게 있으면)
+      const digits = (s) => String(s || '').replace(/[^\d~]/g, '');
+      const prevSums = messages.filter((m) => m.role === 'assistant').map((m) => String(m.content || '')).join('\n').match(/합계[^\n]*/g) || [];
+      const sameQuote = lastCalc && prevSums.some((l) => digits(l) === digits(lastCalc.summaryLine));
+      if (leadBefore && !meta.lead && lastCalc && !sameQuote) {
+        const phones = userTexts.match(/01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/g) || [];
+        const input = {
+          contactName: '(앞 접수와 같은 손님)',
+          phone: phones.length ? phones[phones.length - 1] : '-',
+          menu: (lastCalc.items || []).map((i) => `${i.name} ${i.servings}`).join(', '),
+          region: lastCalc.region || '',
+          note: '손님이 접수 뒤 견적을 바꿈(챗봇이 바뀐 견적으로 자동 전달)',
+          isUpdate: true,
+        };
+        const history = messages.filter((m) => m.role === 'assistant').map((m) => m.content);
+        const out = await handleLead(input, { botTexts: [...history, ...preTexts], calcs, history });
+        meta.tools.push({ name: 'submit_lead', input, status: out.status, auto: true });
+        meta.lead = true;
+        leadKind = leadKind || 'update';
       }
       // 이번 요청에서 접수했으면 답 끝에 정해진 접수 표시 줄(다음 턴의 '이미 접수됨' 판단 근거 + 손님에게도 분명히)
       reply = reply.replace(LEAD_MARK_ANY, '').replace(/\n{3,}/g, '\n\n').trim();   // 표시 줄은 서버만 붙임
@@ -446,6 +538,11 @@ module.exports = async function handler(req, res) {
       return res.status(200).json(picker ? { reply, usage, picker } : { reply, usage });
     }
 
+    // 도구를 여러 번 부르다 최종 답을 못 받고 끝난 경우: 이번 요청에서 이미 접수했으면 손님이 다시 보내 중복 접수되지 않게 접수됐다고 알림
+    if (leadKind) {
+      const done = english ? 'Your request has been received. Our staff will contact you soon.' : '접수는 됐어요. 담당자가 확인해서 곧 연락드릴게요.';
+      return res.status(200).json({ reply: done + '\n\n' + (english ? LEAD_MARK.en : leadKind === 'update' ? LEAD_MARK.koUpdate : LEAD_MARK.ko) });
+    }
     return res.status(200).json({ reply: '죄송해요, 잠시 후 다시 시도해 주세요.' });
   } catch (e) {
     return res.status(500).json({ error: String(e) });
