@@ -177,13 +177,16 @@ async function handleLead(input, ctx = {}) {
   const calcs = ctx.calcs || [], history = ctx.history || [];
   const won = (n) => Math.round(n).toLocaleString('ko-KR');
   // 손님에게 마지막으로 보여 준 합계(이번 요청 전) — 추가 접수의 견적 줄·변경 줄에 씀
-  let lastSum = null;
-  for (let i = history.length - 1; i >= 0 && !lastSum; i--) {
-    const l = String(history[i] || '').split('\n').filter((x) => /^\s*\*\*합계/.test(x)).pop();
-    if (l) { const n = amounts(l.replace(/\(.*$/, '')).slice(0, 2); if (n.length) lastSum = n; }
+  // 합계가 나온 가장 최근 답의 합계 줄 전부(손님이 두 안을 비교한 답이면 둘 다) — 마지막 줄 하나만 보면 고르지 않은 안을 이전 견적으로 잡던 일
+  let lastSums = [];
+  for (let i = history.length - 1; i >= 0 && !lastSums.length; i--) {
+    lastSums = String(history[i] || '').split('\n').filter((x) => /^\s*\*\*합계/.test(x))
+      .map((l) => amounts(l.replace(/\(.*$/, '')).slice(0, 2)).filter((n) => n.length);
   }
-  // 다시 계산하지 않은 추가 접수(이메일만 보탬·삭제 요청 등)는 화면에 마지막으로 보여 준 합계가 곧 견적 — "견적 확인 필요"가 잘못 붙던 일
-  const quote = p.isUpdate && !calcs.length && lastSum ? amountText(lastSum) : quoteLine(p.quote, ctx.botTexts || [], calcs);
+  const lastSum = lastSums.length ? lastSums[lastSums.length - 1] : null;
+  // 다시 계산하지 않은 추가 접수(이메일만 보탬·삭제 요청 등): 챗봇이 적은 금액과 맞는 합계가 있으면 그대로, 없을 때만 마지막 합계 — "견적 확인 필요"가 잘못 붙던 일
+  const baseQuote = quoteLine(p.quote, ctx.botTexts || [], calcs);
+  const quote = p.isUpdate && !calcs.length && lastSum && /견적 확인 필요/.test(baseQuote) ? amountText(lastSum) : baseQuote;
   const when = [p.eventDate, p.serveTime].filter(Boolean).join(' ');
   const org = [p.company, p.contactPerson].filter(Boolean).join(' ');
   const who = [org, p.contactName && !org.includes(p.contactName) ? p.contactName : ''].filter(Boolean).join(' / ');   // 회사명이 있어도 손님 이름이 빠지지 않게
@@ -205,7 +208,9 @@ async function handleLead(input, ctx = {}) {
   const lc = [...calcs].reverse().find((c) => c && c.status === 'ok');
   const nowNums = lc ? (lc.mode === 'range' ? [lc.rangeLow, lc.rangeHigh] : [lc.subtotal]) : null;
   const fmt = (ns) => (ns.length > 1 ? '약 ' : '') + ns.map(won).join('~') + '원';
-  const change = p.isUpdate && lastSum && nowNums && fmt(lastSum) !== fmt(nowNums) ? `변경: 견적 ${fmt(lastSum)} → ${fmt(nowNums)}` : '';
+  // 이번 견적이 앞서 보여 준 안 중 하나와 같으면 변경 아님(날짜만 고친 추가 접수 등)
+  const sameAsShown = nowNums && lastSums.some((n) => fmt(n) === fmt(nowNums));
+  const change = p.isUpdate && lastSum && nowNums && !sameAsShown ? `변경: 견적 ${lastSums.length > 1 ? '(앞서 비교한 안 중) ' : ''}${fmt(lastSum)} → ${fmt(nowNums)}` : '';
   if (change && !auto) tags[0] = '견적 변경';
   // 견적서 칸 중 전기·출력물은 계산에 넣은 조건으로 고정 칸(손님이 말 안 했으면 확인 필요)
   const ci = (lc && lc._input) || {};
