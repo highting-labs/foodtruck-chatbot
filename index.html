@@ -889,7 +889,7 @@ document.getElementById('calc').onclick=()=>{
     box.innerHTML = '<div class="dh">음료 ' + n + '가지 고르기 <span></span></div><div class="dl"></div><div class="da"></div>';
     const cnt = box.querySelector('.dh span'), list = box.querySelector('.dl'), act = box.querySelector('.da');
     const go = document.createElement('button'); go.className = 'go';
-    const later = document.createElement('button'); later.textContent = '통화 때 정할게요';
+    const later = document.createElement('button'); later.textContent = '나중에 정할게요';
     const draw = function(){
       cnt.textContent = (sel.length >= n ? '바꾸려면 하나 빼기 · ' : '') + sel.length + ' / ' + n;
       list.querySelectorAll('button').forEach(function(b){
@@ -908,7 +908,7 @@ document.getElementById('calc').onclick=()=>{
       if (busy || !sel.length) return;
       send('음료는 ' + sel.join('·') + (sel.length < n ? '로 하고 나머지는 추천으로 해 주세요' : '로 할게요'));
     };
-    later.onclick = function(){ if (!busy) send('음료는 지금 기본 구성으로 두고 통화 때 정할게요'); };
+    later.onclick = function(){ if (!busy) send('음료는 지금 기본 구성으로 두고 나중에 담당자와 정할게요'); };
     act.appendChild(go); act.appendChild(later);
     chipsEl.appendChild(box); draw(); scrollDown();
   }
