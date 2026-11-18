@@ -174,23 +174,73 @@ function quoteLine(modelQuote, botTexts, calcs = []) {
 // 상담 리드를 담당자에게 문자로 발송 (ctx: 날짜 보정 표시, 손님에게 보여 준 챗봇 글)
 async function handleLead(input, ctx = {}) {
   const p = input || {};
-  const quote = quoteLine(p.quote, ctx.botTexts || [], ctx.calcs || []);
+  const calcs = ctx.calcs || [], history = ctx.history || [];
+  const won = (n) => Math.round(n).toLocaleString('ko-KR');
+  // 손님에게 마지막으로 보여 준 합계(이번 요청 전) — 추가 접수의 견적 줄·변경 줄에 씀
+  let lastSum = null;
+  for (let i = history.length - 1; i >= 0 && !lastSum; i--) {
+    const l = String(history[i] || '').split('\n').filter((x) => /^\s*\*\*합계/.test(x)).pop();
+    if (l) { const n = amounts(l.replace(/\(.*$/, '')).slice(0, 2); if (n.length) lastSum = n; }
+  }
+  // 다시 계산하지 않은 추가 접수(이메일만 보탬·삭제 요청 등)는 화면에 마지막으로 보여 준 합계가 곧 견적 — "견적 확인 필요"가 잘못 붙던 일
+  const quote = p.isUpdate && !calcs.length && lastSum ? amountText(lastSum) : quoteLine(p.quote, ctx.botTexts || [], calcs);
   const when = [p.eventDate, p.serveTime].filter(Boolean).join(' ');
   const org = [p.company, p.contactPerson].filter(Boolean).join(' ');
   const who = [org, p.contactName && !org.includes(p.contactName) ? p.contactName : ''].filter(Boolean).join(' / ');   // 회사명이 있어도 손님 이름이 빠지지 않게
+  const auto = p.contactName === '(앞 접수와 같은 손님)';
+
+  // 담당자가 문자 첫머리만 보고 무슨 건인지·무엇을 조심할지 알게(페르소나 시험: 삭제 요청·남의 번호가 문의 줄에 묻힘)
+  const nth = history.filter((h) => endsWithLeadMark(h)).length;   // 이 대화에서 앞서 접수된 횟수
+  const tags = [auto ? '견적 변경(자동 전달)' : p.isUpdate ? '정보 추가' : '신규'];
+  if (p.contactName === '미기재' && !org) tags.push('이름 미확인');
+  if (/최소 금액 미달/.test(quote)) tags.push('최소 금액 미달');
+  const allText = Object.values(p).filter((v) => typeof v === 'string').join(' ');
+  const warn = [];
+  if (/개인정보\s*삭제|삭제\s*요청|번호\s*(지워|삭제)/.test(p.note || '')) warn.push('⚠ 개인정보 삭제 요청 — 연락 전 처리 여부 확인');
+  if (/본인 번호 아님/.test(p.note || '')) warn.push('⚠ 본인 번호 아님(손님 말) — 이 번호로 연락해도 되는지 확인');
+  if (/손님 글·확인 안 됨/.test(allText)) warn.push('⚠ 손님이 쓴 링크·머리글 포함 — 내용 확인');
+  if (ctx.dateNote) warn.push('⚠ 행사 날짜 연도 확인');
+  if (/견적 확인 필요/.test(quote)) warn.push('⚠ 챗봇이 적은 금액과 계산 결과가 다름 — 견적 확인');
+  // 추가 접수에서 견적이 바뀌었으면 이전 → 지금
+  const lc = [...calcs].reverse().find((c) => c && c.status === 'ok');
+  const nowNums = lc ? (lc.mode === 'range' ? [lc.rangeLow, lc.rangeHigh] : [lc.subtotal]) : null;
+  const fmt = (ns) => (ns.length > 1 ? '약 ' : '') + ns.map(won).join('~') + '원';
+  const change = p.isUpdate && lastSum && nowNums && fmt(lastSum) !== fmt(nowNums) ? `변경: 견적 ${fmt(lastSum)} → ${fmt(nowNums)}` : '';
+  if (change && !auto) tags[0] = '견적 변경';
+  // 견적서 칸 중 전기·출력물은 계산에 넣은 조건으로 고정 칸(손님이 말 안 했으면 확인 필요)
+  const ci = (lc && lc._input) || {};
+  const power = !lc ? '' : ci.powerAvailable === false || (lc.costs && lc.costs.자가발전기 > 0) ? '없음(자가발전기 포함)' : ci.powerAvailable === true ? '있음' : '확인 필요(있다고 보고 계산)';
+  const banner = !lc ? '' : Array.isArray(ci.sideBanners) ? (ci.sideBanners.length ? `상단·중앙 + ${ci.sideBanners.join('·')}` : '상단·중앙만') : '확인 필요(상단·중앙 기본)';
+  const missing = [];
+  if (!p.company) missing.push('행사명·회사');
+  if (!p.email) missing.push('이메일');
+  if (!p.eventDate && !p.datetime) missing.push('날짜');
+  if (!p.serveTime) missing.push('시간');
+  if (!p.address) missing.push('주소');
+  if (!p.payMethod) missing.push('결제방식');
+  if (!p.menu && !lc) missing.push('메뉴·인분');
+  if (!lc || power.startsWith('확인')) missing.push('전기');
+  if (!lc || banner.startsWith('확인')) missing.push('출력물(현수막)');
+
   const lines = [
-    p.isUpdate ? '[푸드트럭하우스 챗봇 상담 · 추가 정보]' : '[푸드트럭하우스 챗봇 상담 신청]',
+    p.isUpdate ? `[푸드트럭하우스 챗봇 상담 · 추가 정보${nth ? ` ${nth}차` : ''}]` : '[푸드트럭하우스 챗봇 상담 신청]',
+    `상태: ${tags.join(' · ')}`,
+    ...warn,
+    ...(change ? [change] : []),
+    ...(!auto && missing.length ? [`견적서 빈 칸: ${missing.join(', ')}`] : []),
     `담당자/회사: ${who || '-'}`,
     `연락처: ${p.phone || '-'}`,
   ];
   if (p.email) lines.push(`이메일: ${p.email}`);
   if (when) lines.push(`날짜·시간: ${when}${ctx.dateNote || ''}`);
   if (p.address) lines.push(`주소: ${p.address}`);
-  if (p.callTime) lines.push(`통화 편한 시간: ${p.callTime}`);
+  if (p.callTime) lines.push(`손님이 말한 통화 시간: ${p.callTime}`);
   if (p.payMethod) lines.push(`결제: ${p.payMethod}`);
   if (p.region) lines.push(`지역: ${p.region}`);
   if (p.menu) lines.push(`메뉴/인분: ${p.menu}`);
   if (p.drinkChoice) lines.push(`음료 구성: ${p.drinkChoice}`);
+  if (power) lines.push(`전기: ${power}`);
+  if (banner) lines.push(`현수막: ${banner}`);
   if (quote) lines.push(`견적: ${quote}`);
   const norm = (s) => String(s).replace(/\s/g, '').replace(/\d{4}-/g, '');   // 연도 보정으로 연도만 달라진 건 같은 글로 봄
   if (p.datetime && (!when || norm(p.datetime) !== norm(when))) lines.push(`일정: ${p.datetime}`);   // 날짜·시간 줄과 같은 글일 때만 생략(여러 날 일정 등은 남김)
@@ -340,15 +390,19 @@ module.exports = async function handler(req, res) {
             // 영어 손님이면 장소 안내 자리에 정해 둔 영어 문구를 넣음(매뉴얼 지시만으로는 한국어 원문이 가끔 그대로 나감)
             if (english && out.venueNoticeEn) out = Object.assign({}, out, { venueNotice: out.venueNoticeEn });
             if (askedBanner && Array.isArray(out.notes)) out = Object.assign({}, out, { notes: out.notes.filter((n) => !/현수막 위치를 아직 안 물어봤어요/.test(n)) });
-            calcs.push(out);   // 같은 요청의 접수 문자 견적 줄에 씀
+            calcs.push(Object.assign({}, out, { _input: cin }));   // 같은 요청의 접수 문자 견적 줄에 씀(전기·현수막 칸에 쓰려고 넣은 조건도 같이)
             meta.tools.push({ name: 'calculate_quote', input: cin, status: out.status, subtotal: out.subtotal, rangeLow: out.rangeLow, rangeHigh: out.rangeHigh, mode: out.mode, region: out.region, items: out.items, costs: out.costs, banners: out.banners, capacity: out.capacity });   // 보드에서 견적서 품목 채울 때 씀
           } else if (tu.name === 'submit_lead') {
             const input = cleanLead(tu.input);   // 손님이 넣은 값 정리(문자·시트·보드 기록 모두 이 값)
             if (leadSent) input.isUpdate = true;   // 모델이 isUpdate를 빠뜨려 같은 손님이 '상담 신청'으로 여러 번 들어가던 일 막기
             leadSent = true;
+            const origDate = input.eventDate;
             const fd = fixPastDate(input.eventDate); input.eventDate = fd.date;
-            const botTexts = [...messages.filter((m) => m.role === 'assistant').map((m) => m.content), ...preTexts];
-            out = await handleLead(input, { dateNote: fd.note, botTexts, calcs });
+            // "일정" 칸(손님 말 그대로)에도 같은 날짜가 있으면 같이 고침 — 한 문자에 연도가 두 가지로 나오던 일
+            if (fd.note && fd.date !== origDate && typeof input.datetime === 'string') input.datetime = input.datetime.split(origDate).join(fd.date);
+            const history = messages.filter((m) => m.role === 'assistant').map((m) => m.content);
+            const botTexts = [...history, ...preTexts];
+            out = await handleLead(input, { dateNote: fd.note, botTexts, calcs, history });
             // 날짜가 있으면 그날 직영 여유(보드 '챗봇 상담'에 🟢/🟡/🟠로 표시 + 이후 응대 깊이)
             // 전기 없다는 말이 대화에 있었으면 발전기까지 따져서 판단 (예전엔 빠져서 발전기 모자란 날도 '여유'로 나왔음)
             const allUser = convo.filter((m) => m.role === 'user' && typeof m.content === 'string').map((m) => m.content).join(' ');
@@ -454,8 +508,8 @@ module.exports = async function handler(req, res) {
           note: '손님이 접수 뒤 견적을 바꿈(챗봇이 바뀐 견적으로 자동 전달)',
           isUpdate: true,
         };
-        const botTexts = [...messages.filter((m) => m.role === 'assistant').map((m) => m.content), ...preTexts];
-        const out = await handleLead(input, { botTexts, calcs });
+        const history = messages.filter((m) => m.role === 'assistant').map((m) => m.content);
+        const out = await handleLead(input, { botTexts: [...history, ...preTexts], calcs, history });
         meta.tools.push({ name: 'submit_lead', input, status: out.status, auto: true });
         meta.lead = true;
         leadKind = leadKind || 'update';
