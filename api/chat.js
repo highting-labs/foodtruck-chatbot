@@ -16,13 +16,13 @@ const { checkRate, limitMessage } = require('../lib/rate-limit.js');
 const MAX_USER_TURNS = Number(process.env.CHAT_MAX_TURNS) || 40;
 const MAX_USER_CHARS = 2000, MAX_BOT_CHARS = 6000, MAX_MESSAGES = 100;
 
-// 상담용 모델. 환경변수 CHAT_MODEL로 바꿀 수 있음(기본 claude-sonnet-5-5, 되돌리려면 claude-sonnet-4-6). Sonnet 5.5는 생각 설정(CHAT_THINKING·CHAT_EFFORT)을 같이 맞춤
-const MODEL = process.env.CHAT_MODEL || 'claude-sonnet-5-5';   // 2026-11-10 4.6 → 5.5 (회귀 17개·시험 손님 30명 비교: 2배 빠르고 약 1/3 저렴, 품질 같거나 나음)
+// 상담용 모델. 환경변수 CHAT_MODEL로 바꿀 수 있음(기본 claude-haiku-5-5, 되돌리려면 claude-sonnet-5-5). Sonnet 5.5는 생각 설정(CHAT_THINKING·CHAT_EFFORT)을 같이 맞춤(Haiku는 기본값 그대로)
+const MODEL = process.env.CHAT_MODEL || 'claude-haiku-5-5';   // 2026-11-23 Sonnet 5.5 → Haiku 5.5 (회귀 59대화·고정 세트 20명·24문항 비교: 품질 거의 같고 턴당 약 1/11~1/12 비용, docs/ai-research/MODEL_EVALUATION.md 5.6·5.7)
 const IS_S55 = /^claude-sonnet-5-5/.test(MODEL);
 const S55_THINKING = process.env.CHAT_THINKING || 'adaptive';   // adaptive(필요할 때만 짧게) / between_tools(생각 끔)
 const S55_EFFORT = process.env.CHAT_EFFORT || 'low';
 // 요금(달러, 100만 토큰당) — 대화 기록에 비용을 같이 남기기 위함. Sonnet 4.6은 공개 요금 기준, 바뀌면 여기만 고침
-const PRICE = { 'claude-sonnet-4-6': { in: 3, out: 15, cw: 3.75, cr: 0.30 }, 'claude-sonnet-5-5': { in: 2, out: 10, cw: 2.5, cr: 0.10 } };   // Sonnet 5.5 캐시 읽기는 입력의 0.05배(다른 모델 0.1배와 다름)
+const PRICE = { 'claude-sonnet-4-6': { in: 3, out: 15, cw: 3.75, cr: 0.30 }, 'claude-sonnet-5-5': { in: 2, out: 10, cw: 2.5, cr: 0.10 }, 'claude-haiku-5-5': { in: 0.10, out: 0.50, cw: 0.125, cr: 0.01 } };   // Sonnet 5.5 캐시 읽기는 입력의 0.05배(다른 모델 0.1배와 다름). Haiku 5.5는 프롬프트 10만 토큰 이하 단가
 
 // AI에게 알려줄 도구 정의
 const tools = [
@@ -363,8 +363,8 @@ module.exports = async function handler(req, res) {
     const leadBefore = leadSent;   // 이번 요청 전에 이미 접수된 대화인지(견적 변경 자동 전달 판단용)
     // 이미 접수한 대화면 모델에게도 알림(앞 턴의 도구 호출은 모델에 가지 않아 "접수 안 됐다"고 단정하던 일)
     const leadNote = leadSent ? [{ type: 'text', text: '[봇에게] 이 대화에서는 이미 상담 접수가 됐어요(담당자에게 전달됨). 손님이 접수 여부를 물으면 "네, 접수돼 있어요"라고 답하고, 정보를 보태면 submit_lead로 추가하세요. 내부 도구 이름은 말하지 않습니다.' }] : [];
-    // 도구 호출이 나오면 실행하고 다시 물어보는 루프 (최대 3회)
-    for (let i = 0; i < 3; i++) {
+    // 도구 호출이 나오면 실행하고 다시 물어보는 루프 (최대 4회 — Haiku는 계산 2번 + 접수를 한 답에서 해 3회를 다 쓰는 일이 있었음)
+    for (let i = 0; i < 4; i++) {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -374,7 +374,7 @@ module.exports = async function handler(req, res) {
         },
         body: JSON.stringify({
           model: MODEL,
-          max_tokens: IS_S55 ? 4096 : 1024,
+          max_tokens: 4096,   // Haiku 5.5는 생각이 기본으로 켜져 1024면 답이 문장 중간에서 잘렸음(24문항 중 2개)
           ...(IS_S55 ? { thinking: { type: S55_THINKING }, output_config: { effort: S55_EFFORT } } : {}),
           // 프롬프트 캐싱: 고정 지식(system)에 캐시 지점을 두면 tools+system이 함께 캐시된다.
           // 반복 요청 시 이 부분은 재계산하지 않고 캐시에서 읽어 비용·속도를 크게 줄인다(답변 품질은 동일).
