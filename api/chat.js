@@ -507,7 +507,9 @@ module.exports = async function handler(req, res) {
       const askedBefore = messages.some((m) => m.role === 'assistant' && /연락처|1877-6901/.test(String(m.content || '')));
       // "담당자 확인" 말이 목록 줄(- · •)에만 있으면 원칙 설명 같은 글이라 붙이지 않음(내부 지침 질문 답 끝에 연락처 요청이 붙던 일)
       const consultLine = reply.split('\n').some((l) => /담당자.{0,20}(확인|조율)/.test(l) && !/^\s*([-·•*]|\d+\.)\s/.test(l));
-      if (!hasPhone && !askedBefore && consultLine && !/연락처|1877-6901/.test(reply)) {
+      // 견적이 한 번이라도 나온 대화에서만 붙임 — "노란색 차 있어요?" 같은 가벼운 문의에 곧바로 연락처를 묻던 일(11-23 실무자 시험)
+      const quoteShown = /합계/.test(reply) || messages.some((m) => m.role === 'assistant' && /합계/.test(String(m.content || '')));
+      if (!hasPhone && !askedBefore && consultLine && quoteShown && !/연락처|1877-6901/.test(reply)) {
         reply += '\n\n담당자가 확인해서 연락드릴 수 있게, 성함(회사명)과 연락처를 남겨 주시겠어요?';
       }
       // 연락처 요청은 한 대화에 한 번만: 앞 답에서 이미 물었고 아직 번호가 없으면 이번 답의 연락처 요청 줄을 뺌
@@ -527,7 +529,9 @@ module.exports = async function handler(req, res) {
       // 챗봇이 "진행을 위해 아래 두 가지만 알려 주세요"처럼 진행 절차로 묻는 답이면 손님이 진행 의사를 보인 것 → 지우지 않음
       // (운영 시험 11-23: 연락처 줄만 지워져 "두 가지" 뒤에 성함 한 줄만 남음)
       const proceedAsk = /(진행|접수|예약|확정)(을|를)?\s?위해|진행하시려면|접수하시려면|진행해\s?드릴\s?수\s?있게/.test(reply);
-      if (!hasPhone && askedContact && !wantsGo && !proceedAsk) {
+      // 견적이 아직 없는 가벼운 문의("노란색 차 있어요?")에 모델이 바로 연락처를 묻는 것도 뺌 — 손님이 전화·연락을 원한 경우는 빼지 않음(11-23 실무자 시험)
+      const casualAsk = !quoteShown && !/전화|통화|연락\s?(주|달|부탁|해)/.test(lastUserText);
+      if (!hasPhone && (askedContact || casualAsk) && !wantsGo && !proceedAsk) {
         // 연락처를 말하는 목록 줄은 통째로, 일반 줄은 그 문장만 빼고 나머지 문장은 남김
         reply = reply.split('\n').map((l) => {
           if (!CONTACT.test(l)) return l;
@@ -539,6 +543,8 @@ module.exports = async function handler(req, res) {
         // 모델이 같은 진행 질문을 이미 썼으면(마침표로 끝나 '?' 판정에 안 걸림) 다시 붙이지 않음
         if (/합계/.test(reply) && !/[?？]\s*$/.test(reply) && !/진행하실(까요|지|래요)|진행할까요|진행하시겠어요/.test(reply) && !/(알려|말씀해)\s?주세요[.!]?\s*$/.test(reply)) reply += '\n\n' + NEXT_STEP;   // "어느 쪽으로 할지 알려 주세요."로 끝난 답에도 또 붙던 일(11-23)   // "진행하실지 알려 주세요"로 이미 물었는데 또 붙던 일(HKM-FS-09)
       }
+      // 출력물·현수막·배너 문의면 "상단·중앙은 기본(서비스)"을 답 첫머리에 보장(11-23 사용자 의견 — 매뉴얼만으로는 8번 중 2번 빠짐)
+      if (/출력물|인쇄물|현수막|배너/.test(lastUserText) && !english && !/상단·?\s?중앙/.test(reply.split('\n').filter((l) => l.trim()).slice(0, 3).join('\n'))) reply = '상단·중앙 현수막은 기본으로 들어가요(서비스).\n\n' + reply;   // 첫 세 줄 안에 없으면(아래쪽에만 있어도) 맨 앞에
       // 대표번호는 손님이 전화·통화를 원하거나, 연락이 안 온다·급하다고 하거나, 번호를 안 남기겠다·삭제해 달라고 할 때만
       // (실제 상담 시험: 작별 인사·진행 상황 질문·이탈 손님 답 끝에 "대표번호로도 문의하실 수 있어요"가 습관처럼 붙던 일)
       const PHONE_OK = /전화|통화|연락\s?(이|을|도)?\s?(안|없|못|주)|급(해|하|한|히)|번호.{0,8}(싫|안\s?남|못\s?남|말고|부담)|남기기\s?(싫|어렵|부담)|삭제|지워|대표\s?번호|사무실\s?번호|고객\s?센터|(연락처|번호)\s?(좀|뭐|알려|어떻게|있)/;
