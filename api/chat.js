@@ -500,6 +500,29 @@ module.exports = async function handler(req, res) {
         .replace(/^\s*>\s?/gm, '')                       // 인용 기호(>)도 그대로 보여서 제거
         .replace(/\n{3,}/g, '\n\n')
         .trim();
+      // 계산기 없이 지어낸 금액 막기(절대 규칙): 10만 원 이상 금액이 이번 계산 결과·앞선 답·손님 말·메뉴판·매뉴얼 어디에도 없으면 그 문장을 뺌
+      // (11-23 실무자 시험: "츄러스+회오리감자 100인분이면 약 40만 원 안팎" — 계산기 없이 어림한 틀린 금액)
+      {
+        const known = new Set();
+        const addNums = (s) => amounts(s).forEach((n) => [1, 1.1, 0.1].forEach((k) => known.add(Math.round(n * k))));
+        calcs.forEach((c) => [c.subtotal, c.rangeLow, c.rangeHigh, c.vatIncluded, c.foodValue, c.minimum,
+          ...Object.values(c.costs || {}), ...(c.items || []).map((i) => i.amount)].forEach((n) => {
+          if (Number(n) > 0) [1, 1.1, 0.1].forEach((k) => known.add(Math.round(Number(n) * k)));   // 부가세 포함·부가세 액수도 계산 결과로 봄
+        }));
+        messages.forEach((m) => addNums(typeof m.content === 'string' ? m.content : ''));
+        addNums(menuText); addNums(SYSTEM_KNOWLEDGE);
+        let dropped = false;
+        const cleaned = reply.split('\n').map((line) => {
+          if (!amounts(line).some((n) => n >= 100000 && !known.has(Math.round(n)))) return line;
+          const keep = line.split(/(?<=[.?!。])\s+/).filter((sen) => !amounts(sen).some((n) => n >= 100000 && !known.has(Math.round(n))));
+          dropped = true;
+          return keep.length ? keep.join(' ') : null;
+        }).filter((l) => l !== null).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+        if (dropped) {
+          reply = (cleaned ? cleaned + '\n\n' : '') + (english ? 'Once the menu and quantity are set, I will calculate the exact amount right away.' : '메뉴와 인분을 정해 주시면 정확한 금액은 계산기로 바로 계산해 드릴게요.');
+          meta.amountGuard = true;   // 상담 기록에서 이 장치가 걸린 답을 찾을 수 있게
+        }
+      }
       // 조율·확인이 필요한 답은 접수로 이어지게(전화로 넘기지 않음): 아직 번호를 안 받았고 이번 대화에서 연락처를 물은 적도 없으면 한 줄 붙임
       // (규칙 글만으로는 "인원·지역 알려 주세요"로 끝나는 경우가 있어 서버에서 보장)
       const userTexts = convo.filter((m) => m.role === 'user' && typeof m.content === 'string').map((m) => m.content).join(' ');
