@@ -516,13 +516,14 @@ module.exports = async function handler(req, res) {
       // "남겨 주시면 접수해 드릴게요"처럼 '연락처' 없이 번호를 다시 조르던 말도 포함(실제 상담 시험 55·70)
       const CONTACT = /연락처|휴대폰\s?번호|핸드폰\s?번호|전화\s?번호|번호를?\s?남겨|남겨\s?주신\s?번호|남겨\s?주(시면|세요|시겠).{0,12}(접수|연락)/;
       const askedContact = messages.some((m) => m.role === 'assistant' && CONTACT.test(String(m.content || '')));
-      const lastUser = String((convo.filter((m) => m.role === 'user' && typeof m.content === 'string').pop() || {}).content || '');
+      // 손님 마지막 말(글자). 바깥 lastUser(메시지 객체)와 이름이 같아 상담 기록에 손님 말이 빠지던 일(11-19~11-23) → 이름 분리
+      const lastUserText = String((convo.filter((m) => m.role === 'user' && typeof m.content === 'string').pop() || {}).content || '');
       // 앞 답이 진행 질문(NEXT_STEP)으로 끝났고 손님이 "네/그걸로" 등으로 받았으면 진행 의사로 봄
       const NEXT_STEP = '이 구성으로 진행하실까요? 메뉴나 인원을 바꾸시려면 말씀해 주세요.';
       const prevBot = String((messages.filter((m) => m.role === 'assistant').pop() || {}).content || '');
       // "진행하게 되면 연락드리겠습니다"·"문의드리려고 연락드렸습니다" 같은 말은 진행 의사가 아님 → 분명한 말만
-      const wantsGo = /(진행|예약|계약)\s?(할게|할께|하겠|해\s?주|해\s?줘|부탁|하고\s?싶|원해|할래|합시다)|예약할|확정\s?(할게|할께|하겠|해\s?주|이죠|인가요|으로\s?할)|접수\s?(해|부탁)|그걸로\s?할|이걸로\s?할/.test(lastUser)
-        || (prevBot.includes(NEXT_STEP) && /^\s*(네|넵|예|응|ㅇㅇ|ㅇㅋ|오케이|좋|그걸로|이걸로|그렇게|그래)/.test(lastUser));
+      const wantsGo = /(진행|예약|계약)\s?(할게|할께|하겠|해\s?주|해\s?줘|부탁|하고\s?싶|원해|할래|합시다)|예약할|확정\s?(할게|할께|하겠|해\s?주|이죠|인가요|으로\s?할)|접수\s?(해|부탁)|그걸로\s?할|이걸로\s?할/.test(lastUserText)
+        || (prevBot.includes(NEXT_STEP) && /^\s*(네|넵|예|응|ㅇㅇ|ㅇㅋ|오케이|좋|그걸로|이걸로|그렇게|그래)/.test(lastUserText));
       if (!hasPhone && askedContact && !wantsGo) {
         // 연락처를 말하는 목록 줄은 통째로, 일반 줄은 그 문장만 빼고 나머지 문장은 남김
         reply = reply.split('\n').map((l) => {
@@ -538,7 +539,7 @@ module.exports = async function handler(req, res) {
       // 대표번호는 손님이 전화·통화를 원하거나, 연락이 안 온다·급하다고 하거나, 번호를 안 남기겠다·삭제해 달라고 할 때만
       // (실제 상담 시험: 작별 인사·진행 상황 질문·이탈 손님 답 끝에 "대표번호로도 문의하실 수 있어요"가 습관처럼 붙던 일)
       const PHONE_OK = /전화|통화|연락\s?(이|을|도)?\s?(안|없|못|주)|급(해|하|한|히)|번호.{0,8}(싫|안\s?남|못\s?남|말고|부담)|남기기\s?(싫|어렵|부담)|삭제|지워|대표\s?번호|사무실\s?번호|고객\s?센터|(연락처|번호)\s?(좀|뭐|알려|어떻게|있)/;
-      if (/1877-6901/.test(reply) && !PHONE_OK.test(lastUser)) {
+      if (/1877-6901/.test(reply) && !PHONE_OK.test(lastUserText)) {
         reply = reply.split('\n').map((l) => {
           if (!/1877-6901/.test(l)) return l;
           const rest = l.split(/(?<=[.?!])\s+/).filter((s) => !/1877-6901/.test(s)).join(' ').trim();
