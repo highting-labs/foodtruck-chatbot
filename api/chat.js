@@ -11,6 +11,7 @@ const { logLead } = require('../lib/sheet-log.js');
 const { logChat } = require('../lib/chat-log.js');
 const { capacityCheck, capacityGuide } = require('../lib/capacity.js');
 const { checkRate, limitMessage } = require('../lib/rate-limit.js');
+const { alertFailure } = require('../lib/slack-alert.js');
 
 // 대화 크기 제한 (비용·악용 방지): 손님 말 40번 넘으면 전화 안내, 한 말은 2,000자까지
 const MAX_USER_TURNS = Number(process.env.CHAT_MAX_TURNS) || 40;
@@ -262,6 +263,8 @@ async function handleLead(input, ctx = {}) {
   if (p.note) lines.push(`문의: ${p.note}`);
 
   const res = await sendLeadAlert(lines.join('\n'));
+  // 문자가 안 나가면 담당자가 접수를 모름 → 슬랙으로 바로 알림(손님 이름·번호는 빼고)
+  if (!res.ok) await alertFailure('sms', { where: '챗봇 접수', reason: res.reason, sessionId: ctx.sessionId, summary: [p.menu, p.region, p.isUpdate ? '추가 정보' : '신규'].filter(Boolean).join(' · ') });
 
   // 구글시트에도 영구 기록(문자를 놓쳐도 리드를 잃지 않기 위함). 실패해도 무시.
   // 시트 칸은 Apps Script에 고정돼 있어 음료 구성은 note에 붙임
@@ -408,6 +411,7 @@ module.exports = async function handler(req, res) {
       const data = await r.json();
       if (data && data.usage) { const u = data.usage; usage.calls++; usage.input += u.input_tokens || 0; usage.output += u.output_tokens || 0; usage.cacheWrite += u.cache_creation_input_tokens || 0; usage.cacheRead += u.cache_read_input_tokens || 0; }
       if (data.error) {
+        await alertFailure('error', { where: 'AI 호출', reason: data.error.message || 'API 오류', sessionId });
         return res.status(500).json({ error: data.error.message || 'API 오류' });
       }
 
@@ -440,7 +444,7 @@ module.exports = async function handler(req, res) {
             if (fd.note && fd.date !== origDate && typeof input.datetime === 'string') input.datetime = input.datetime.split(origDate).join(fd.date);
             const history = messages.filter((m) => m.role === 'assistant').map((m) => m.content);
             const botTexts = [...history, ...preTexts];
-            out = await handleLead(input, { dateNote: fd.note, botTexts, calcs, history });
+            out = await handleLead(input, { dateNote: fd.note, botTexts, calcs, history, sessionId });
             // 날짜가 있으면 그날 직영 여유(보드 '챗봇 상담'에 🟢/🟡/🟠로 표시 + 이후 응대 깊이)
             // 전기 없다는 말이 대화에 있었으면 발전기까지 따져서 판단 (예전엔 빠져서 발전기 모자란 날도 '여유'로 나왔음)
             const allUser = convo.filter((m) => m.role === 'user' && typeof m.content === 'string').map((m) => m.content).join(' ');
@@ -563,7 +567,7 @@ module.exports = async function handler(req, res) {
           isUpdate: true,
         };
         const history = messages.filter((m) => m.role === 'assistant').map((m) => m.content);
-        const out = await handleLead(input, { botTexts: [...history, ...preTexts], calcs, history });
+        const out = await handleLead(input, { botTexts: [...history, ...preTexts], calcs, history, sessionId });
         meta.tools.push({ name: 'submit_lead', input, status: out.status, auto: true });
         meta.lead = true;
         leadKind = leadKind || 'update';
@@ -594,8 +598,10 @@ module.exports = async function handler(req, res) {
     }
     // 이 경로도 상담 기록에 남김(전에는 기록이 빠져 주간 점검에서도 안 보였음)
     await logChat({ sessionId, page, userText: lastUser && lastUser.content, reply: '(도구 반복 끝, 답 없음)', meta: Object.assign(meta, { usage, fallback: true }) }).catch(() => {});
+    await alertFailure('error', { where: '도구 반복 끝(답 없음)', reason: `도구 ${meta.tools.length}회 뒤 최종 답 없음`, sessionId });
     return res.status(200).json({ reply: '죄송해요, 잠시 후 다시 시도해 주세요.' });
   } catch (e) {
+    await alertFailure('error', { where: '서버 예외', reason: String((e && e.message) || e).slice(0, 300), sessionId: (req.body && req.body.sessionId) || '' });
     return res.status(500).json({ error: String(e) });
   }
 };
