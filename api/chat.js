@@ -200,7 +200,9 @@ async function handleLead(input, ctx = {}) {
   if (/최소 금액 미달/.test(quote)) tags.push('최소 금액 미달');
   const allText = Object.values(p).filter((v) => typeof v === 'string').join(' ');
   // 사무실 답(11-20 질문 9): "그냥 전화 주세요" 손님은 정보와 함께 담당자에게 → 상태 줄에 표시
-  if (p.callTime || /전화\s?(주세요|주시|부탁|원함|원하|상담|요청)|통화\s?(원|부탁|희망|요청)/.test(p.note || '')) tags.push('전화 요청');
+  // 모델이 메모를 "전화 연락을 원함"·"손님이 전화 요청"처럼 여러 모양으로 써서 단어 조합으로 봄(11-23 시험에서 두 번 빠짐)
+  const callNote = String(p.note || '');
+  if (p.callTime || (/전화|통화/.test(callNote) && /원|요청|연락|부탁|주세요|희망/.test(callNote))) tags.push('전화 요청');
   const warn = [];
   if (/개인정보\s*삭제|삭제\s*요청|번호\s*(지워|삭제)/.test(p.note || '')) warn.push('⚠ 개인정보 삭제 요청 — 연락 전 처리 여부 확인');
   if (/본인 번호 아님/.test(p.note || '')) warn.push('⚠ 본인 번호 아님(손님 말) — 이 번호로 연락해도 되는지 확인');
@@ -365,8 +367,16 @@ module.exports = async function handler(req, res) {
     const leadBefore = leadSent;   // 이번 요청 전에 이미 접수된 대화인지(견적 변경 자동 전달 판단용)
     // 이미 접수한 대화면 모델에게도 알림(앞 턴의 도구 호출은 모델에 가지 않아 "접수 안 됐다"고 단정하던 일)
     const leadNote = leadSent ? [{ type: 'text', text: '[봇에게] 이 대화에서는 이미 상담 접수가 됐어요(담당자에게 전달됨). 손님이 접수 여부를 물으면 "네, 접수돼 있어요"라고 답하고, 정보를 보태면 submit_lead로 추가하세요. 내부 도구 이름은 말하지 않습니다.' }] : [];
+    // 앞서 견적에 쓴 지역(출장비 줄)을 알려 줌 — 메뉴를 바꾸면 이미 받은 지역을 다시 묻던 일(운영 시험 11-23: 커피 → 핫도그로 바꾸자 "수원"을 다시 물음)
+    const regionHits = [...messages.filter((m) => m.role === 'assistant').map((m) => String(m.content || '')).join('\n')
+      .matchAll(/(?:출장비|Travel fee)\s?\(([^),]+)/gi)].map((m) => m[1].trim());
+    const knownRegion = regionHits.length ? regionHits[regionHits.length - 1] : '';
+    const regionNote = knownRegion ? [{ type: 'text', text: `[봇에게] 이 대화에서 이미 받은 행사 지역: ${knownRegion} — 메뉴·인분을 바꿔도 지역은 다시 묻지 말고 이 지역으로 계산하세요(손님이 지역을 바꾸면 그때만 새 지역).` }] : [];
     // 도구 호출이 나오면 실행하고 다시 물어보는 루프 (최대 4회 — Haiku는 계산 2번 + 접수를 한 답에서 해 3회를 다 쓰는 일이 있었음)
-    for (let i = 0; i < 4; i++) {
+    // 도구는 4번까지, 그래도 끝나지 않으면 마지막 한 번은 도구 없이 지금까지 결과로 답하게 함
+    // (운영 시험 11-23: 50명 음식 조합을 계속 계산하다 한도를 다 써서 "잠시 후 다시 시도해 주세요"로 끝남)
+    const TOOL_ROUNDS = 4;
+    for (let i = 0; i <= TOOL_ROUNDS; i++) {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -386,8 +396,11 @@ module.exports = async function handler(req, res) {
             { type: 'text', text: todayText() },   // 날짜는 캐시 지점 뒤에(매일 바뀜)
             { type: 'text', text: `[봇에게] 접수 뒤 담당자 연락 안내는 "곧 연락드릴게요" 대신 이 문장을 그대로 쓰세요: "${contactWhen()}"` },
             ...leadNote,
+            ...regionNote,
+            ...(i === TOOL_ROUNDS ? [{ type: 'text', text: '[봇에게] 이번 답에서는 도구를 더 쓸 수 없어요. 지금까지의 계산 결과와 대화만으로 손님에게 바로 답하세요. 계산하지 않은 새 금액은 말하지 말고, 더 계산이 필요하면 무엇을 정해 주시면 계산해 드린다고만 하세요. 빈 답은 안 됩니다.' }] : []),
           ],
           tools,
+          ...(i === TOOL_ROUNDS ? { tool_choice: { type: 'none' } } : {}),
           messages: convo,
         }),
       });
@@ -515,7 +528,7 @@ module.exports = async function handler(req, res) {
         }).filter((l) => l !== null).join('\n').replace(/\n{3,}/g, '\n\n').trim();
         // 연락처를 다시 묻지 않는 대신, 견적만 보여 주고 끝나 손님이 다음에 뭘 할지 모르는 일이 없게 진행 질문으로 마무리
         // 모델이 같은 진행 질문을 이미 썼으면(마침표로 끝나 '?' 판정에 안 걸림) 다시 붙이지 않음
-        if (/합계/.test(reply) && !/[?？]\s*$/.test(reply) && !/진행하실(까요|지|래요)|진행할까요|진행하시겠어요/.test(reply)) reply += '\n\n' + NEXT_STEP;   // "진행하실지 알려 주세요"로 이미 물었는데 또 붙던 일(HKM-FS-09)
+        if (/합계/.test(reply) && !/[?？]\s*$/.test(reply) && !/진행하실(까요|지|래요)|진행할까요|진행하시겠어요/.test(reply) && !/(알려|말씀해)\s?주세요[.!]?\s*$/.test(reply)) reply += '\n\n' + NEXT_STEP;   // "어느 쪽으로 할지 알려 주세요."로 끝난 답에도 또 붙던 일(11-23)   // "진행하실지 알려 주세요"로 이미 물었는데 또 붙던 일(HKM-FS-09)
       }
       // 대표번호는 손님이 전화·통화를 원하거나, 연락이 안 온다·급하다고 하거나, 번호를 안 남기겠다·삭제해 달라고 할 때만
       // (실제 상담 시험: 작별 인사·진행 상황 질문·이탈 손님 답 끝에 "대표번호로도 문의하실 수 있어요"가 습관처럼 붙던 일)
@@ -579,6 +592,8 @@ module.exports = async function handler(req, res) {
       const done = english ? 'Your request has been received. Our staff will contact you soon.' : '접수는 됐어요. ' + contactWhen();
       return res.status(200).json({ reply: done + '\n\n' + (english ? LEAD_MARK.en : leadKind === 'update' ? LEAD_MARK.koUpdate : LEAD_MARK.ko) });
     }
+    // 이 경로도 상담 기록에 남김(전에는 기록이 빠져 주간 점검에서도 안 보였음)
+    await logChat({ sessionId, page, userText: lastUser && lastUser.content, reply: '(도구 반복 끝, 답 없음)', meta: Object.assign(meta, { usage, fallback: true }) }).catch(() => {});
     return res.status(200).json({ reply: '죄송해요, 잠시 후 다시 시도해 주세요.' });
   } catch (e) {
     return res.status(500).json({ error: String(e) });
