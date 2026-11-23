@@ -145,7 +145,7 @@ function amountText(nums, withVat = true) {
 // 모델 quote에 금액·기본 말 말고 다른 말("하루치", "제주 출장비 별도 안내" 등)이 있으면 원문을 뒤에 붙임 — 계산 결과로 바꿔 쓸 때 사라지지 않게
 function quoteExtra(modelQuote) {
   const rest = String(modelQuote || '').replace(/(\d+(?:\.\d+)?)\s*만\s*(?:\d\s*천)?|\d{1,3}(?:,\d{3})+|\d{5,}/g, '')
-    .replace(/합계|약|원|부가세\s*(별도|포함)|출장비\s*포함|확정\s*전|[~()·,./:\s-]/g, '');
+    .replace(/합계|약|원|부가세\s*(별도|포함)|출장비\s*포함|확정\s*전|Total|KRW|[~()·,./:\s-]/gi, '');
   return rest ? ` / 챗봇 안내: ${modelQuote}` : '';
 }
 
@@ -164,8 +164,9 @@ function quoteLine(modelQuote, botTexts, calcs = []) {
     return amountText(nums(pick)) + quoteExtra(modelQuote);
   }
   const sums = [];
-  for (const t of botTexts) for (const l of String(t || '').split('\n')) if (/^\s*\*\*합계/.test(l)) sums.push(amounts(l.replace(/\(.*$/, '')).slice(0, 2));
-  if (!sums.filter((s) => s.length).length) return modelQuote || '';
+  for (const t of botTexts) for (const l of String(t || '').split('\n')) if (/^\s*(?:[-·•]\s*)?\*\*(합계|Total)/i.test(l)) sums.push(amounts(l.replace(/\(.*$/, '')).slice(0, 2));
+  // 계산기 결과도, 손님에게 보여 준 합계 줄도 없는데 모델이 금액을 적었으면 모델이 직접 계산한 금액 → 확인 표시(S25-e: 172인분 702,000원)
+  if (!sums.filter((s) => s.length).length) return q.length ? `${modelQuote} (계산기 결과 없음 — 견적 확인 필요)` : (modelQuote || '');
   for (let i = sums.length - 1; i >= 0; i--) if (modelQuote && same(sums[i])) return amountText(sums[i]) + quoteExtra(modelQuote);
   const last = amountText(sums.filter((s) => s.length).pop(), false);
   return modelQuote ? `${modelQuote} / 대화 마지막 합계: ${last} (견적 확인 필요)` : `${last} (견적 확인 필요)`;
@@ -180,7 +181,7 @@ async function handleLead(input, ctx = {}) {
   // 합계가 나온 가장 최근 답의 합계 줄 전부(손님이 두 안을 비교한 답이면 둘 다) — 마지막 줄 하나만 보면 고르지 않은 안을 이전 견적으로 잡던 일
   let lastSums = [];
   for (let i = history.length - 1; i >= 0 && !lastSums.length; i--) {
-    lastSums = String(history[i] || '').split('\n').filter((x) => /^\s*\*\*합계/.test(x))
+    lastSums = String(history[i] || '').split('\n').filter((x) => /^\s*(?:[-·•]\s*)?\*\*(합계|Total)/i.test(x))
       .map((l) => amounts(l.replace(/\(.*$/, '')).slice(0, 2)).filter((n) => n.length);
   }
   const lastSum = lastSums.length ? lastSums[lastSums.length - 1] : null;
@@ -205,7 +206,8 @@ async function handleLead(input, ctx = {}) {
   if (/본인 번호 아님/.test(p.note || '')) warn.push('⚠ 본인 번호 아님(손님 말) — 이 번호로 연락해도 되는지 확인');
   if (/손님 글·확인 안 됨/.test(allText)) warn.push('⚠ 손님이 쓴 링크·머리글 포함 — 내용 확인');
   if (ctx.dateNote) warn.push('⚠ 행사 날짜 연도 확인');
-  if (/견적 확인 필요/.test(quote)) warn.push('⚠ 챗봇이 적은 금액과 계산 결과가 다름 — 견적 확인');
+  if (/계산기 결과 없음/.test(quote)) warn.push('⚠ 계산기로 계산하지 않은 금액 — 견적 다시 계산');
+  else if (/견적 확인 필요/.test(quote)) warn.push('⚠ 챗봇이 적은 금액과 계산 결과가 다름 — 견적 확인');
   // 추가 접수에서 견적이 바뀌었으면 이전 → 지금
   const lc = [...calcs].reverse().find((c) => c && c.status === 'ok');
   const nowNums = lc ? (lc.mode === 'range' ? [lc.rangeLow, lc.rangeHigh] : [lc.subtotal]) : null;
@@ -530,9 +532,14 @@ module.exports = async function handler(req, res) {
       const lastCalc = calcs.filter((c) => c && c.status === 'ok').pop();
       // 부가세만 묻는 등 같은 금액으로 다시 계산한 경우는 보내지 않음(앞서 안내한 합계 줄 중 숫자가 같은 게 있으면)
       const digits = (s) => String(s || '').replace(/[^\d~]/g, '');
-      const prevSums = messages.filter((m) => m.role === 'assistant').map((m) => String(m.content || '')).join('\n').match(/합계[^\n]*/g) || [];
+      const prevSums = messages.filter((m) => m.role === 'assistant').map((m) => String(m.content || '')).join('\n').match(/(합계|Total)[^\n]*/g) || [];   // 영어 답은 "Total"
       const sameQuote = lastCalc && prevSums.some((l) => digits(l) === digits(lastCalc.summaryLine));
-      if (leadBefore && !meta.lead && lastCalc && !sameQuote) {
+      // 같은 답에서 서로 다른 견적을 여럿 계산했으면 손님이 고르기 전의 비교(예: 발전기·현수막을 넣으면 얼마) → 자동 전달 안 함(HKM-FS-14)
+      const shownOptions = new Set(calcs.filter((c) => c && c.status === 'ok').map((c) => c.summaryLine)).size;
+      // 메뉴·인분이 앞서 보여 준 그대로면(현수막·발전기 같은 옵션만 넣어 본 계산) 손님이 바꾼 게 아님 → 자동 전달 안 함
+      const prevBotText = messages.filter((m) => m.role === 'assistant').map((m) => String(m.content || '')).join('\n');
+      const sameItems = lastCalc && (lastCalc.items || []).length > 0 && (lastCalc.items || []).every((i) => new RegExp(`${i.servings}\\s?(인분|잔|개|명|servings?|cups?|portions?)`, 'i').test(prevBotText));
+      if (leadBefore && !meta.lead && lastCalc && !sameQuote && shownOptions <= 1 && !sameItems) {
         const phones = userTexts.match(/01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/g) || [];
         const input = {
           contactName: '(앞 접수와 같은 손님)',
