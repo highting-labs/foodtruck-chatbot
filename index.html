@@ -235,6 +235,9 @@ select:focus,input:focus,.body textarea:focus{outline:none;border-color:var(--bl
 .q-pics{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 .q-pics img{width:112px;height:84px;object-fit:cover;margin:0;border-radius:10px;background:#fff}
 .q-pics img:only-child{width:132px;height:96px}
+/* 금액이 없는 답(출력물·메뉴판 안내 등)은 사진을 말풍선 폭으로 크게 — 썸네일로는 글자가 안 읽힘(11-23 사용자 의견) */
+.q-pics.big{display:block}
+.q-pics.big img,.q-pics.big img:only-child{width:100%;height:auto;max-width:100%;object-fit:contain;margin-top:6px}
 .q-ask{padding-top:12px;border-top:1px solid #d3dbea;font-weight:600;color:var(--navy)}
 .q-done{display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border-radius:10px;background:var(--ok-soft);color:var(--ok);font-size:14px;font-weight:700;line-height:1.45}
 .q-done svg{flex:none;width:18px;height:18px;margin-top:1px}
@@ -908,6 +911,8 @@ document.getElementById('calc').onclick=()=>{
     const ROW = /^(.+?) — (.+)$/;
     // 접수 띠는 마지막 ✅ 줄 하나만(모델이 "✅ 접수됐어요"를 첫 줄에 쓰면 서버 접수 표시와 띠가 두 개 뜨던 일)
     let okLeft = (html.match(/(^|\n)[ \t]*✅/g) || []).length;
+    // 견적 금액(합계 줄)이 없는 답이면 사진을 크게, 첫 견적 답처럼 금액이 있으면 썸네일(답 길이 줄이기)
+    const bigPics = !/<strong>합계/.test(html);
     const paras = html.split(/\n[ \t]*\n/).map(function(p){
       let out = '', pics = '', quote = false, total = false, done = false;
       p.split('\n').forEach(function(l){
@@ -924,7 +929,7 @@ document.getElementById('calc').onclick=()=>{
         if (total || t.indexOf('※') === 0) { out += '<div class="q-meta">' + t + '</div>'; return; }
         out += '<div class="q-line">' + t + '</div>';
       });
-      if (pics) out += '<div class="q-pics">' + pics + '</div>';
+      if (pics) out += '<div class="q-pics' + (bigPics ? ' big' : '') + '">' + pics + '</div>';
       return out ? { html: out, quote: quote, done: done, pics: !!pics } : null;
     }).filter(Boolean);
     const di = paras.findIndex(function(x){ return x.done; });
