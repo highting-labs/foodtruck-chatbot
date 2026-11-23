@@ -22,7 +22,7 @@ const IS_S55 = /^claude-sonnet-5-5/.test(MODEL);
 const S55_THINKING = process.env.CHAT_THINKING || 'adaptive';   // adaptive(필요할 때만 짧게) / between_tools(생각 끔)
 const S55_EFFORT = process.env.CHAT_EFFORT || 'low';
 // 요금(달러, 100만 토큰당) — 대화 기록에 비용을 같이 남기기 위함. Sonnet 4.6은 공개 요금 기준, 바뀌면 여기만 고침
-const PRICE = { 'claude-sonnet-4-6': { in: 3, out: 15, cw: 3.75, cr: 0.30 }, 'claude-sonnet-5-5': { in: 2, out: 10, cw: 2.5, cr: 0.20 } };
+const PRICE = { 'claude-sonnet-4-6': { in: 3, out: 15, cw: 3.75, cr: 0.30 }, 'claude-sonnet-5-5': { in: 2, out: 10, cw: 2.5, cr: 0.10 } };   // Sonnet 5.5 캐시 읽기는 입력의 0.05배(다른 모델 0.1배와 다름)
 
 // AI에게 알려줄 도구 정의
 const tools = [
