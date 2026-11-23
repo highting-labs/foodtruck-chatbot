@@ -5,7 +5,8 @@
 
 const { calculateQuote } = require('../lib/quote-engine.js');
 const { getMenuData, menuPromptText } = require('../lib/menu-source.js');
-const { SYSTEM_KNOWLEDGE, CLASSIC_DRINKS } = require('../lib/knowledge.js');
+const { SYSTEM_KNOWLEDGE, CLASSIC_DRINKS, VENUE_NOTICE_EN_SHORT, VENUE_NOTICE_EN_FULL } = require('../lib/knowledge.js');
+const { VENUE_NOTICE_SHORT, VENUE_NOTICE_FULL } = require('../lib/quote-calc.js');
 const { sendLeadAlert } = require('../lib/lead-notify.js');
 const { logLead } = require('../lib/sheet-log.js');
 const { logChat } = require('../lib/chat-log.js');
@@ -572,6 +573,8 @@ module.exports = async function handler(req, res) {
         meta.lead = true;
         leadKind = leadKind || 'update';
       }
+      // 한국어로 돌아온 손님에게 앞 턴의 영어 장소 안내를 그대로 다시 쓰는 일(Haiku 회귀 1턴) → 정해 둔 한국어 원문으로 바꿈
+      if (!english) reply = reply.split(VENUE_NOTICE_EN_FULL).join(VENUE_NOTICE_FULL).split(VENUE_NOTICE_EN_SHORT).join(VENUE_NOTICE_SHORT);
       // 이번 요청에서 접수했으면 답 끝에 정해진 접수 표시 줄(다음 턴의 '이미 접수됨' 판단 근거 + 손님에게도 분명히)
       reply = reply.replace(LEAD_MARK_ANY, '').replace(/\n{3,}/g, '\n\n').trim();   // 표시 줄은 서버만 붙임
       if (leadKind) reply += '\n\n' + (english ? LEAD_MARK.en : leadKind === 'update' ? LEAD_MARK.koUpdate : LEAD_MARK.ko);
