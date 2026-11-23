@@ -172,6 +172,7 @@ SYSTEM = """당신은 푸드트럭하우스 직원을 돕는 상담 도우미입
 규칙:
 1. 금액은 [현재 견적 계산 결과]나 [과거 사례]에 적힌 숫자만 씁니다. 새 금액·할인율·정책을 지어내지 않습니다.
 2. 과거 사례 금액은 '과거 사례(사례 ID) 기준'이라고 밝히고, price_status가 confirmed가 아니면 '확정 아님'이라고 씁니다.
+   과거 금액은 그때 수량 기준이라 지금 견적으로 쓰지 않습니다. [현재 견적 계산 결과]가 있으면 지금 견적은 반드시 그 합계로 씁니다.
 3. 근거가 부족하면 hold=true, hold_reason에 이유를 쓰고 need_to_confirm에 직원이 확인할 것을 적습니다.
 4. referenced_cases에는 실제로 참고한 사례 ID만 넣습니다.
 5. 한국어로 담백하고 짧게(5문장 이내) 씁니다."""
@@ -180,12 +181,14 @@ SYSTEM = """당신은 푸드트럭하우스 직원을 돕는 상담 도우미입
 def answer(folder, q, model, k=3):
     hits = search(folder, q, k=k)
     params, pmeta = chat_json(model, '고객 문의에서 견적 계산에 필요한 메뉴·인분·지역만 뽑습니다. 메뉴판 이름이 확실하지 않으면 손님 말 그대로 씁니다. 모르면 빈 값.', q, PARAM_SCHEMA)
-    quote = current_quote(params) if params.get('has_quote_request') else None
+    # 메뉴·인분·지역이 뽑히면 모델 플래그(has_quote_request)와 상관없이 항상 엔진 계산(11-19: 플래그를 안 세우고 직접 계산해 틀린 일)
+    quote = current_quote(params) if (params.get('items') and params.get('region')) else None
     ctx = []
     for h in hits:
         c = h['case']
+        total = c['quote_total'] and format(c['quote_total'], ',') + '원' or '-'
         ctx.append(f"- 사례 {c['case_id']}: {c.get('event_type') or '-'} / {c.get('region') or '-'} / {c.get('people') or '-'}명 / 메뉴 {', '.join(c['menus']) or '-'} / "
-                   f"합계 {c['quote_total'] and format(c['quote_total'], ',') + '원' or '-'} / price_status={c['price_status']} / 요청 {', '.join(c['requests']) or '-'}\n  대화 요약: {c['staff_text'][:220]}")
+                   f"당시 합계 {total}(당시 {c.get('people') or '?'}명 기준 — 수량이 다르면 지금 견적으로 쓰지 않음) / price_status={c['price_status']} / 요청 {', '.join(c['requests']) or '-'}\n  대화 요약: {c['staff_text'][:220]}")
     qtxt = '없음'
     if quote and quote.get('status') == 'ok':
         qtxt = json.dumps({k: quote.get(k) for k in ('summaryLine', 'subtotal', 'rangeLow', 'rangeHigh', 'items', 'costs', 'notes') if quote.get(k) is not None}, ensure_ascii=False)[:1500]
@@ -204,10 +207,13 @@ def answer(folder, q, model, k=3):
     core = lambda s: (re.search(r'S\d{3}-\d+', str(s)) or re.search(r'.*', str(s))).group(0)
     hit_ids = {core(h['case_id']) for h in hits}
     bad_ids = [i for i in (data.get('referenced_cases') or []) if core(i) not in hit_ids] if isinstance(data, dict) else []
-    guard = {'unsupported_amounts': unsupported, 'unknown_case_ids': bad_ids}
-    if unsupported or bad_ids:
+    # 엔진 견적이 나왔는데 답에 그 합계(또는 범위)가 없으면 과거 금액을 지금 견적처럼 쓴 것으로 봄(11-19: 150개 질문에 100개 사례 합계)
+    quote_nums = {quote.get(k) for k in ('subtotal', 'rangeLow', 'rangeHigh') if quote and quote.get('status') == 'ok' and isinstance(quote.get(k), (int, float))}
+    missing_quote = bool(quote_nums) and not (quote_nums & set(nums))
+    guard = {'unsupported_amounts': unsupported, 'unknown_case_ids': bad_ids, 'missing_current_quote': missing_quote}
+    if unsupported or bad_ids or missing_quote:
         data['hold'] = True
-        data['hold_reason'] = (data.get('hold_reason') or '') + f" [자동 보류: 근거 없는 금액 {unsupported} / 없는 사례 {bad_ids}]"
+        data['hold_reason'] = (data.get('hold_reason') or '') + f" [자동 보류: 근거 없는 금액 {unsupported} / 없는 사례 {bad_ids} / 현재 견적 합계 누락 {missing_quote}]"
     return {'question': q, 'model': model, 'hits': [{k: h[k] for k in ('case_id', 'bm25', 'cos')} for h in hits], 'params': params,
             'quote_status': quote and quote.get('status'), 'quote_subtotal': quote and quote.get('subtotal'), 'answer': data,
             'guard': guard, 'meta': {'param': pmeta, 'answer': ameta, 'sec': round(pmeta['sec'] + ameta['sec'], 2)}}
