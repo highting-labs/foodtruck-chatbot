@@ -198,6 +198,8 @@ async function handleLead(input, ctx = {}) {
   if (p.contactName === '미기재' && !org) tags.push('이름 미확인');
   if (/최소 금액 미달/.test(quote)) tags.push('최소 금액 미달');
   const allText = Object.values(p).filter((v) => typeof v === 'string').join(' ');
+  // 사무실 답(11-20 질문 9): "그냥 전화 주세요" 손님은 정보와 함께 담당자에게 → 상태 줄에 표시
+  if (p.callTime || /전화\s?(주세요|주시|부탁|원함|원하|상담|요청)|통화\s?(원|부탁|희망|요청)/.test(p.note || '')) tags.push('전화 요청');
   const warn = [];
   if (/개인정보\s*삭제|삭제\s*요청|번호\s*(지워|삭제)/.test(p.note || '')) warn.push('⚠ 개인정보 삭제 요청 — 연락 전 처리 여부 확인');
   if (/본인 번호 아님/.test(p.note || '')) warn.push('⚠ 본인 번호 아님(손님 말) — 이 번호로 연락해도 되는지 확인');
@@ -281,6 +283,17 @@ function todayText() {
   const d = new Date(Date.now() + 9 * 3600 * 1000);
   const w = '일월화수목금토'[d.getUTCDay()];
   return `오늘: ${d.toISOString().slice(0, 10)} (${w}) — 한국 시간`;
+}
+
+// 접수 뒤 연락 안내(사무실 답 11-20: 영업시간엔 몇 분 안에, 길어도 10~20분) — 영업시간 평일 10~19시, 공휴일은 모름
+function contactWhen() {
+  const d = new Date(Date.now() + 9 * 3600 * 1000);
+  const day = d.getUTCDay(), h = d.getUTCHours();
+  const weekday = day >= 1 && day <= 5;
+  if (weekday && h >= 10 && h < 19) return '영업시간이라 보통 몇 분 안에(늦어도 20분 안팎) 담당자가 연락드려요.';
+  if (weekday && h < 10) return '오늘 오전 10시 영업 시작 후 담당자가 바로 연락드려요.';
+  const next = day === 5 || day === 6 ? '월요일' : '내일';   // 금 저녁·토 → 월, 일·평일 저녁 → 내일
+  return `지금은 영업시간(평일 10~19시)이 아니라 ${next} 오전에 담당자가 연락드려요.`;
 }
 
 // 커피 세트(2·4·7종) 견적에서 음료 구성을 묻는 답 → { kind:'drinks', count, defaults, options }
@@ -369,6 +382,7 @@ module.exports = async function handler(req, res) {
             { type: 'text', text: SYSTEM_KNOWLEDGE },
             { type: 'text', text: menuText, cache_control: { type: 'ephemeral' } },
             { type: 'text', text: todayText() },   // 날짜는 캐시 지점 뒤에(매일 바뀜)
+            { type: 'text', text: `[봇에게] 접수 뒤 담당자 연락 안내는 "곧 연락드릴게요" 대신 이 문장을 그대로 쓰세요: "${contactWhen()}"` },
             ...leadNote,
           ],
           tools,
@@ -555,7 +569,7 @@ module.exports = async function handler(req, res) {
 
     // 도구를 여러 번 부르다 최종 답을 못 받고 끝난 경우: 이번 요청에서 이미 접수했으면 손님이 다시 보내 중복 접수되지 않게 접수됐다고 알림
     if (leadKind) {
-      const done = english ? 'Your request has been received. Our staff will contact you soon.' : '접수는 됐어요. 담당자가 확인해서 곧 연락드릴게요.';
+      const done = english ? 'Your request has been received. Our staff will contact you soon.' : '접수는 됐어요. ' + contactWhen();
       return res.status(200).json({ reply: done + '\n\n' + (english ? LEAD_MARK.en : leadKind === 'update' ? LEAD_MARK.koUpdate : LEAD_MARK.ko) });
     }
     return res.status(200).json({ reply: '죄송해요, 잠시 후 다시 시도해 주세요.' });
