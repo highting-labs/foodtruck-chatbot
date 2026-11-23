@@ -90,7 +90,7 @@ select,input[type=number],input[type=text],input[type=tel],input[type=email],inp
 select:focus,input:focus,.body textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(0,56,146,.15)}
 .addbtn{margin-top:2px;width:100%;min-height:48px;background:none;border:1px dashed #9fb2d6;color:var(--blue);border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;transition:background-color 150ms ease}
 @media (hover:hover){.addbtn:hover{background:var(--bg-soft)}}
-.menupic{margin-left:auto;min-height:40px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--white);font-size:13.5px;font-weight:600;color:var(--ink-2);cursor:pointer;transition:background-color 150ms ease,color 150ms ease}
+.menupic{margin-left:auto;min-height:44px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--white);font-size:13.5px;font-weight:600;color:var(--ink-2);cursor:pointer;transition:background-color 150ms ease,color 150ms ease}
 @media (hover:hover){.menupic:hover{background:var(--bg-soft);color:var(--blue)}}
 
 /* 칩 선택: 색 + 체크 */
@@ -114,7 +114,7 @@ select:focus,input:focus,.body textarea:focus{outline:none;border-color:var(--bl
 .opt{display:flex;align-items:center;gap:12px;min-height:60px;padding:10px 0;border-bottom:1px solid var(--line-soft)}
 .opt:last-child{border-bottom:none}
 .opt input[type=checkbox]{width:22px;height:22px;accent-color:var(--blue);flex:0 0 auto;cursor:pointer}
-.opt .nm{flex:1;font-size:15px;line-height:1.45;color:var(--ink)}
+.opt .nm{flex:1;cursor:pointer;font-size:15px;line-height:1.45;color:var(--ink)}
 .opt .pr{font-size:13px;color:var(--ink-3)}
 .opt .lead{display:block;font-size:12.5px;font-weight:600;color:var(--ink-2);margin-top:3px}
 .opt .qty{width:64px;height:44px;flex:0 0 auto;text-align:center;padding:0 6px;font-variant-numeric:tabular-nums;-moz-appearance:textfield;appearance:textfield}
@@ -148,7 +148,8 @@ select:focus,input:focus,.body textarea:focus{outline:none;border-color:var(--bl
 .qnote{font-size:13px;color:var(--ink-3);margin-top:10px;line-height:1.6}
 .qnote.venue{color:var(--ink-2);font-weight:500;background:var(--bg-soft);border-radius:10px;padding:10px 12px}
 .consult{margin-top:12px;background:var(--bg-soft);border-left:3px solid var(--blue);border-radius:0 10px 10px 0;padding:12px 14px;font-size:14px;line-height:1.65;color:var(--ink-2)}
-.consult b{display:block;color:var(--navy);font-weight:700;margin-bottom:4px;font-size:15px}
+.consult > b:first-child{display:block;color:var(--navy);font-weight:700;margin-bottom:4px;font-size:15px}  /* 제목만 한 줄로 — 문장 속 굵은 글씨까지 떼어져 360에서 세 줄로 끊기던 것 */
+.consult b{color:var(--navy);font-weight:700}
 .result > .consult{border:1px solid var(--line);border-left:3px solid var(--blue);background:var(--white)}
 .omore{margin-top:16px;background:var(--bg-soft);border:1px solid #c9d6f0;border-radius:16px;padding:20px}
 .omore h4{font-size:17px;font-weight:700;color:var(--navy);margin:0 0 4px;letter-spacing:-.02em}
@@ -209,7 +210,7 @@ select:focus,input:focus,.body textarea:focus{outline:none;border-color:var(--bl
 .bubble{max-width:82%;padding:12px 15px;font-size:15.5px;line-height:1.6;border-radius:18px;word-break:break-word;white-space:pre-wrap;animation:rise .24s var(--ease-out)}
 @keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .bot .bubble{background:var(--bot);color:var(--ink);border-top-left-radius:6px}
-.me  .bubble{background:var(--blue);color:#fff;border-top-right-radius:6px}
+.me  .bubble{background:var(--blue);color:#fff;border-top-right-radius:6px;word-break:keep-all;overflow-wrap:anywhere}  /* "복숭아아이/스티"처럼 낱말 중간에서 끊기지 않게 */
 .bubble strong{font-weight:700}
 .bubble a{word-break:break-all}
 .bot .bubble a{color:var(--blue);font-weight:600;text-decoration:underline;text-underline-offset:2px}
@@ -244,7 +245,7 @@ select:focus,input:focus,.body textarea:focus{outline:none;border-color:var(--bl
 .imgview .x{position:fixed;top:10px;right:10px;width:44px;height:44px;border-radius:50%;border:0;background:rgba(255,255,255,.92);color:var(--navy);font-size:18px;line-height:44px;text-align:center;cursor:pointer}
 .imgview.mp{flex-direction:column;justify-content:flex-start;gap:10px;cursor:default}
 .imgview.mp .mtabs{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;max-width:720px;padding-right:48px}
-.imgview.mp .mtabs button{min-height:40px;padding:0 14px;border-radius:999px;border:0;background:rgba(255,255,255,.16);color:#fff;font-size:13.5px;font-weight:600;cursor:pointer}
+.imgview.mp .mtabs button{min-height:44px;padding:0 14px;border-radius:999px;border:0;background:rgba(255,255,255,.16);color:#fff;font-size:13.5px;font-weight:600;cursor:pointer}
 .imgview.mp .mtabs button.on{background:#fff;color:var(--navy)}
 .imgview.mp img{max-width:min(720px,100%);max-height:none;height:auto}
 .typing{display:inline-flex;gap:5px;align-items:center;padding:3px 2px}
@@ -624,6 +625,15 @@ function toggleOpt(id){
     document.querySelectorAll('.zonebtn[data-opt="'+id+'"]').forEach(function(z){ z.classList.toggle('on',cb.checked); });
   });
 });
+// 옵션 이름 글자를 눌러도 그 줄 체크가 바뀌게(체크칸 22px만 눌리던 것 — 폰에서 누르기 어려움)
+document.querySelectorAll('.opt .nm').forEach(function(nm){
+  nm.addEventListener('click',function(){
+    var cb=nm.parentElement.querySelector('input[type=checkbox]'); if(!cb)return;
+    cb.checked=!cb.checked; cb.dispatchEvent(new Event('change'));
+  });
+});
+// 크게 보기(메뉴판·말풍선 사진)를 Esc로도 닫기(PC)
+document.addEventListener('keydown',function(e){ if(e.key==='Escape') document.querySelectorAll('.imgview').forEach(function(v){ v.remove(); }); });
 
 /* 계산 */
 // 보드 '챗봇 상담'에 남길 때 쓰는 번호(신청 한 번 = 한 건)
@@ -733,11 +743,14 @@ document.getElementById('calc').onclick=()=>{
   if(exact){
     badge=`<span class="badge fix">예상 견적</span>`;
     valHtml=`<span class="val">${won(subtotal)}</span>`;
-    note=`부가세 별도 (세금계산서 발행 가능). 예산에 맞춰 협의 가능하니 필요하시면 편하게 문의 주세요. · 기본 3시간·배식 1시간 전 셋팅 포함.`;
+    note=`부가세 별도 (세금계산서 발행 가능). 확정 전 예상 금액이에요. · 기본 3시간·배식 1시간 전 셋팅 포함.`;
   }else{
     badge=`<span class="badge range">대략 예상 금액</span>`;
     valHtml=`<span class="val">${won(lo)}~${won(hi)}</span>`;
-    note='예산안에 따른 협의가 가능하니 필요하시면 편하게 문의 주세요. (부가세 별도)';
+    // 사무실 답(11-20): 500인분 이상만 1인분 300~500원 할인 안내, 그 밖의 할인·협의는 먼저 말하지 않음(챗봇과 같게)
+    note = R.bulk
+      ? `${QuoteCalc.RULES.BULK_SERVINGS}인분 이상이라 1인분 ${QuoteCalc.RULES.BULK_OFF_MIN}~${QuoteCalc.RULES.BULK_OFF_MAX}원 할인이 들어갈 수 있어요(아래쪽 금액에 반영). 확정 전 예상 금액이에요. (부가세 별도)`
+      : '담당자가 조건을 확인한 뒤 확정해 드려요. 확정 전 예상 금액이에요. (부가세 별도)';
   }
 
   const rHtml = reasons.map(r=>'<div>· '+r+'</div>').join('');
@@ -893,11 +906,14 @@ document.getElementById('calc').onclick=()=>{
   const OK_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="currentColor"/><path d="M6 10.3l2.6 2.6L14 7.5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   function shapeReply(html){
     const ROW = /^(.+?) — (.+)$/;
+    // 접수 띠는 마지막 ✅ 줄 하나만(모델이 "✅ 접수됐어요"를 첫 줄에 쓰면 서버 접수 표시와 띠가 두 개 뜨던 일)
+    let okLeft = (html.match(/(^|\n)[ \t]*✅/g) || []).length;
     const paras = html.split(/\n[ \t]*\n/).map(function(p){
       let out = '', pics = '', quote = false, total = false, done = false;
       p.split('\n').forEach(function(l){
         const t = l.trim(); if (!t) return;
         if (/^(<img [^>]*>\s*)+$/.test(t)) { pics += t; return; }
+        if (t.indexOf('✅') === 0 && --okLeft > 0) { out += '<div class="q-line">' + t.replace(/^✅\s*/, '') + '</div>'; return; }
         if (t.indexOf('✅') === 0) { done = true; out += '<div class="q-done">' + OK_ICON + '<span>' + t.replace(/^✅\s*/, '') + '</span></div>'; return; }
         if (t.indexOf('└') === 0) { out += '<div class="q-sub">' + t.replace(/^└\s*/, '') + '</div>'; return; }
         const tm = t.match(/^<strong>(합계)\s*(.+?)<\/strong>\s*(.*)$/);
@@ -1042,6 +1058,7 @@ document.getElementById('calc').onclick=()=>{
         history.push({ role: 'assistant', content: reply });
         keep();
         if (data.picker && data.picker.kind === 'drinks') renderDrinkPicker(data.picker);
+        else renderChips([{ label: '↺ 새로 시작', action: restart }]);   // 대화 도중에도 처음부터 할 수 있게(전에는 새로고침 뒤에만 보였음)
       }
     } catch (e) {
       hideTyping();
