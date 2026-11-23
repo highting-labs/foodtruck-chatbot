@@ -244,6 +244,10 @@ async function handleLead(input, ctx = {}) {
   if (p.region) lines.push(`지역: ${p.region}`);
   if (p.menu) lines.push(`메뉴/인분: ${p.menu}`);
   if (p.drinkChoice) lines.push(`음료 구성: ${p.drinkChoice}`);
+  // 이번 요청에 계산이 없으면(견적 다음 턴에 접수) 앞서 보여 준 답의 "차량 N대"로
+  const prevTrucks = Number(((ctx.botTexts || []).join('\n').match(/차량\s?(\d)대/g) || []).map((s) => s.replace(/\D/g, '')).pop() || 1);
+  const trucks = lc ? lc.trucks || 1 : prevTrucks;
+  if (trucks > 1) lines.push(`차량: ${trucks}대(인분 합계 500 이상, 출장비 ${trucks}대분)`);
   if (power) lines.push(`전기: ${power}`);
   if (banner) lines.push(`현수막: ${banner}`);
   if (quote) lines.push(`견적: ${quote}`);
