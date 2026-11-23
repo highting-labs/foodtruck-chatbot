@@ -32,6 +32,7 @@
 | RAG 8문항 — 4b·9b | 검색 7/7, JSON 8/8, 근거 없는 금액 없음 6·8/8 |
 | pgvector 하이브리드 검색 4문항 | 4/4 1위 |
 | 기존 Claude 기록 재채점(317대화) | 금액 언급 턴의 4.2% 추적 불가 |
+| Haiku 5.5 회귀 59대화 · 고정 세트 20명(11-23) | 회귀: 오류·주입 0, 반복 한도에 걸린 턴 3(한도 4로 재확인 시 0) / 고정 세트: 번호 접수 19/19, 금액 오류 0(1건은 채점 오탐) / 턴당 비용 Sonnet의 약 1/11~1/12, 합계 $0.58 |
 | Claude로 같은 24문항(11-20, 사용자 요청 후) | Sonnet 5.5 24/24 · $0.3231 / Haiku 5.5 24/24 · $0.0236(잘림 2/27) / Haiku 5.5 max_tokens 4096 24/24 · $0.0238(잘림 0) |
 
 ## 발견한 문제
@@ -58,7 +59,7 @@
 
 ## 다음 작업 우선순위
 1. ~~같은 24문항 Claude 실행~~ — 11-20 완료(Sonnet·Haiku)
-2. Haiku 5.5 여러 턴 확인 — 시험장 회귀 59대화(`replay/`) + 고정 세트 20명을 `CHAT_MODEL=claude-haiku-5-5`·`max_tokens 4096` 사본으로(예상 Sonnet 대비 1/14 비용) → 위반 0이면 chatbot-developer가 `CHAT_MODEL` + `max_tokens` 교체 PR
+2. ~~Haiku 5.5 여러 턴 확인~~ — 11-23 완료(MODEL_EVALUATION 5.7): Sonnet과 거의 같은 품질, 턴당 약 1/11~1/12. 남은 것: chatbot-developer가 `CHAT_MODEL=claude-haiku-5-5` + `max_tokens` 4096 + 도구 반복 한도 4 교체 PR → 바꾼 코드로 회귀 59대화 재확인 → 사용자 머지
 3. `PRICE` 캐시 단가 정정 — chatbot-developer가 PR #23(`fix/sonnet55-cache-read-price` → dev, OPEN) 올림 → 사용자 리뷰·머지
 4. RAG 개선: 파라미터가 뽑히면 항상 엔진 호출, 과거 금액은 수량과 묶어 표시 → 8문항 재평가
 5. 승인 시 익명본 적재 → 무작위 50건 사람 확인
