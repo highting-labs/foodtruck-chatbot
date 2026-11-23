@@ -524,7 +524,10 @@ module.exports = async function handler(req, res) {
       // "진행하게 되면 연락드리겠습니다"·"문의드리려고 연락드렸습니다" 같은 말은 진행 의사가 아님 → 분명한 말만
       const wantsGo = /(진행|예약|계약)\s?(할게|할께|하겠|해\s?주|해\s?줘|부탁|하고\s?싶|원해|할래|합시다)|예약할|확정\s?(할게|할께|하겠|해\s?주|이죠|인가요|으로\s?할)|접수\s?(해|부탁)|그걸로\s?할|이걸로\s?할/.test(lastUserText)
         || (prevBot.includes(NEXT_STEP) && /^\s*(네|넵|예|응|ㅇㅇ|ㅇㅋ|오케이|좋|그걸로|이걸로|그렇게|그래)/.test(lastUserText));
-      if (!hasPhone && askedContact && !wantsGo) {
+      // 챗봇이 "진행을 위해 아래 두 가지만 알려 주세요"처럼 진행 절차로 묻는 답이면 손님이 진행 의사를 보인 것 → 지우지 않음
+      // (운영 시험 11-23: 연락처 줄만 지워져 "두 가지" 뒤에 성함 한 줄만 남음)
+      const proceedAsk = /(진행|접수|예약|확정)(을|를)?\s?위해|진행하시려면|접수하시려면|진행해\s?드릴\s?수\s?있게/.test(reply);
+      if (!hasPhone && askedContact && !wantsGo && !proceedAsk) {
         // 연락처를 말하는 목록 줄은 통째로, 일반 줄은 그 문장만 빼고 나머지 문장은 남김
         reply = reply.split('\n').map((l) => {
           if (!CONTACT.test(l)) return l;
@@ -578,6 +581,8 @@ module.exports = async function handler(req, res) {
       if (!english) reply = reply.split(VENUE_NOTICE_EN_FULL).join(VENUE_NOTICE_FULL).split(VENUE_NOTICE_EN_SHORT).join(VENUE_NOTICE_SHORT);
       // 이번 요청에서 접수했으면 답 끝에 정해진 접수 표시 줄(다음 턴의 '이미 접수됨' 판단 근거 + 손님에게도 분명히)
       reply = reply.replace(LEAD_MARK_ANY, '').replace(/\n{3,}/g, '\n\n').trim();   // 표시 줄은 서버만 붙임
+      // 모델이 쓴 "✅ 접수가 완료됐어요" 같은 줄은 ✅만 빼고 글은 남김 — 접수 표시(✅)는 서버 줄 하나만(운영 시험 11-23: ✅ 줄 두 개)
+      reply = reply.replace(/^([ \t]*)✅\s*/gm, '$1');
       if (leadKind) reply += '\n\n' + (english ? LEAD_MARK.en : leadKind === 'update' ? LEAD_MARK.koUpdate : LEAD_MARK.ko);
       // 상담 기록은 답을 먼저 보낸 뒤 저장 (손님 대기 시간 줄이기). Vercel이 응답 뒤에도 끝까지 기다리게 waitUntil 사용,
       // 그 기능이 없는 곳(로컬 시험 서버 등)에서는 예전처럼 저장하고 나서 보냄
