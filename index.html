@@ -726,7 +726,7 @@ document.getElementById('calc').onclick=()=>{
   const bannerRows=R.bannerRows, subtotal=R.subtotal, reasons=R.reasons, trucks=R.trucks;   // 인분 합계 500 이상이면 2대(출장비 2대분)
   const large=R.large, needConsult=R.needConsult, vat=R.vat, total=R.total, lo=R.lo, hi=R.hi, exact=R.exact;
 
-  let lines=items.map(m=>`<div class="qline"><span>${m.label} × ${m.qty}인분</span><span>${won(m.amount)}</span></div>`).join('');
+  let lines=items.map(m=>`<div class="qline"><span>${m.label} ${won(m.price)} × ${m.qty}인분</span><span>${won(m.amount)}</span></div>`).join('');   // 개당 가격도 함께(11-23 실무자 의견)
   if(region) lines+=`<div class="qline"><span>출장비 (${region}) <span style="color:var(--muted);font-size:13px">· 차량 ${trucks}대 기준</span></span><span>${(REGION[region]==null)?'별도 안내':won(travel)}</span></div>`;   // 제주·섬은 출장비 별도 안내(0원 아님)
   if(gen) lines+=`<div class="qline"><span>자가발전기 사용료</span><span>${won(gen)}</span></div>`;
   if(overFee) lines+=`<div class="qline"><span>추가시간 ${extraHours}시간</span><span>${won(overFee)}</span></div>`;
