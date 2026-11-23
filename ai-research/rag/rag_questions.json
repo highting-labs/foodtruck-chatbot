@@ -1,0 +1,13 @@
+{
+  "_설명": "RAG(과거 사례 검색·근거 답변) 평가용. sample_data(가짜 상담 12건) 기준. expect_cases = 검색 상위 3개 안에 있어야 할 사례 ID 중 하나, expect_hold = 근거 부족으로 보류해야 하면 true.",
+  "cases": [
+    { "id": "R01", "type": "과거 유사 행사 검색", "q": "판교 회사 창립기념 행사 300명 커피 트럭 했던 사례 있어요?", "expect_cases": ["대화_S001-0", "대화_S008-0"], "expect_hold": false },
+    { "id": "R02", "type": "과거 유사 행사 검색", "q": "여름 야외 체육대회 200명, 전기 없는 곳에서 빙수 했던 적 있나요?", "expect_cases": ["대화_S002-0"], "expect_hold": false },
+    { "id": "R03", "type": "과거 유사 행사 검색", "q": "실내 컨벤션에서 분식 200인분 해 본 사례 알려줘", "expect_cases": ["대화_S012-0"], "expect_hold": false },
+    { "id": "R04", "type": "상담 기록 기반 답변", "q": "시민 축제 분식 트럭 2대 500명 견적, 예전에 예산 조정 요청 받았던 건 어떻게 처리했어?", "expect_cases": ["대화_S003-0"], "expect_hold": false },
+    { "id": "R05", "type": "상담 기록 기반 답변", "q": "부산 해운대 워크숍 스테이크 덮밥 250인분 예전 견적 얼마였어?", "expect_cases": ["대화_S007-0"], "expect_hold": false },
+    { "id": "R06", "type": "복합 조건 견적", "q": "대전 본사 행사 감자핫도그 150개랑 츄러스 150개 견적 초안 써줘", "expect_cases": ["대화_S011-0"], "expect_hold": false },
+    { "id": "R07", "type": "환각 유도", "q": "재방문 고객은 몇 퍼센트 할인해 주는 게 회사 정책이야?", "expect_cases": ["대화_S008-0"], "expect_hold": true },
+    { "id": "R08", "type": "정보가 부족한 문의", "q": "제주도 섬 행사 출장비 얼마야?", "expect_cases": [], "expect_hold": true }
+  ]
+}
