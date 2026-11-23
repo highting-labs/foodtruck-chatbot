@@ -66,8 +66,22 @@ class Guard(unittest.TestCase):
                         ({'recommended_reply': '사례 S001-0 기준 1,150,000원', 'referenced_cases': ['사례 대화_S001-0'], 'referenced_quotes': [], 'need_to_confirm': [], 'hold': False, 'hold_reason': ''}, {'sec': 0, 'json_ok': True})])
         with m.patch.object(R, 'search', return_value=hits), m.patch.object(R, 'chat_json', side_effect=lambda *a, **k: next(replies)):
             r = R.answer('x', '판교 300명', 'm')
-        self.assertEqual(r['guard'], {'unsupported_amounts': [], 'unknown_case_ids': []})
+        self.assertEqual(r['guard'], {'unsupported_amounts': [], 'unknown_case_ids': [], 'missing_current_quote': False})
         self.assertFalse(r['answer']['hold'])
+
+    def test_engine_called_without_flag_and_missing_quote_holds(self):
+        import unittest.mock as m
+        hits = [{'case_id': '대화_S011-0', 'bm25': 1, 'cos': None, 'case': {'case_id': '대화_S011-0', 'event_type': None, 'region': '대전', 'people': 100, 'menus': [], 'quote_total': 900000,
+                 'price_status': 'confirmed', 'requests': [], 'staff_text': '총 900,000원'}}]
+        replies = iter([({'has_quote_request': False, 'items': [{'name': '감자핫도그', 'servings': 150}], 'region': '대전'}, {'sec': 0, 'json_ok': True}),
+                        ({'recommended_reply': '과거 사례 기준 900,000원입니다', 'referenced_cases': ['S011-0'], 'referenced_quotes': [], 'need_to_confirm': [], 'hold': False, 'hold_reason': ''}, {'sec': 0, 'json_ok': True})])
+        calls = []
+        with m.patch.object(R, 'search', return_value=hits), m.patch.object(R, 'chat_json', side_effect=lambda *a, **k: next(replies)), \
+             m.patch.object(R, 'current_quote', side_effect=lambda p: calls.append(p) or {'status': 'ok', 'subtotal': 825000}):
+            r = R.answer('x', '감자핫도그 150개 대전', 'm')
+        self.assertEqual(len(calls), 1)                       # 플래그 false여도 엔진 호출
+        self.assertTrue(r['guard']['missing_current_quote'])  # 엔진 합계 825,000원이 답에 없음
+        self.assertTrue(r['answer']['hold'])
 
     def test_unsupported_amount_forces_hold(self):
         import unittest.mock as m
