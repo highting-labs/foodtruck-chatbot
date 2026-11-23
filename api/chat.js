@@ -16,13 +16,13 @@ const { checkRate, limitMessage } = require('../lib/rate-limit.js');
 const MAX_USER_TURNS = Number(process.env.CHAT_MAX_TURNS) || 40;
 const MAX_USER_CHARS = 2000, MAX_BOT_CHARS = 6000, MAX_MESSAGES = 100;
 
-// 상담용 모델. 환경변수 CHAT_MODEL로 바꿀 수 있음(기본 claude-sonnet-5-5, 되돌리려면 claude-sonnet-4-6). Sonnet 5.5는 생각 설정(CHAT_THINKING·CHAT_EFFORT)을 같이 맞춤
-const MODEL = process.env.CHAT_MODEL || 'claude-sonnet-5-5';   // 2026-11-10 4.6 → 5.5 (회귀 17개·시험 손님 30명 비교: 2배 빠르고 약 1/3 저렴, 품질 같거나 나음)
+// 상담용 모델. 환경변수 CHAT_MODEL로 바꿀 수 있음(기본 claude-haiku-5-5, 되돌리려면 claude-sonnet-5-5). Sonnet 5.5는 생각 설정(CHAT_THINKING·CHAT_EFFORT)을 같이 맞춤(Haiku는 기본값 그대로)
+const MODEL = process.env.CHAT_MODEL || 'claude-haiku-5-5';   // 2026-11-23 Sonnet 5.5 → Haiku 5.5 (회귀 59대화·고정 세트 20명·24문항 비교: 품질 거의 같고 턴당 약 1/11~1/12 비용, docs/ai-research/MODEL_EVALUATION.md 5.6·5.7)
 const IS_S55 = /^claude-sonnet-5-5/.test(MODEL);
 const S55_THINKING = process.env.CHAT_THINKING || 'adaptive';   // adaptive(필요할 때만 짧게) / between_tools(생각 끔)
 const S55_EFFORT = process.env.CHAT_EFFORT || 'low';
 // 요금(달러, 100만 토큰당) — 대화 기록에 비용을 같이 남기기 위함. Sonnet 4.6은 공개 요금 기준, 바뀌면 여기만 고침
-const PRICE = { 'claude-sonnet-4-6': { in: 3, out: 15, cw: 3.75, cr: 0.30 }, 'claude-sonnet-5-5': { in: 2, out: 10, cw: 2.5, cr: 0.20 } };
+const PRICE = { 'claude-sonnet-4-6': { in: 3, out: 15, cw: 3.75, cr: 0.30 }, 'claude-sonnet-5-5': { in: 2, out: 10, cw: 2.5, cr: 0.10 }, 'claude-haiku-5-5': { in: 0.10, out: 0.50, cw: 0.125, cr: 0.01 } };   // Sonnet 5.5 캐시 읽기는 입력의 0.05배(다른 모델 0.1배와 다름). Haiku 5.5는 프롬프트 10만 토큰 이하 단가
 
 // AI에게 알려줄 도구 정의
 const tools = [
@@ -145,7 +145,7 @@ function amountText(nums, withVat = true) {
 // 모델 quote에 금액·기본 말 말고 다른 말("하루치", "제주 출장비 별도 안내" 등)이 있으면 원문을 뒤에 붙임 — 계산 결과로 바꿔 쓸 때 사라지지 않게
 function quoteExtra(modelQuote) {
   const rest = String(modelQuote || '').replace(/(\d+(?:\.\d+)?)\s*만\s*(?:\d\s*천)?|\d{1,3}(?:,\d{3})+|\d{5,}/g, '')
-    .replace(/합계|약|원|부가세\s*(별도|포함)|출장비\s*포함|확정\s*전|[~()·,./:\s-]/g, '');
+    .replace(/합계|약|원|부가세\s*(별도|포함)|출장비\s*포함|확정\s*전|Total|KRW|[~()·,./:\s-]/gi, '');
   return rest ? ` / 챗봇 안내: ${modelQuote}` : '';
 }
 
@@ -164,8 +164,9 @@ function quoteLine(modelQuote, botTexts, calcs = []) {
     return amountText(nums(pick)) + quoteExtra(modelQuote);
   }
   const sums = [];
-  for (const t of botTexts) for (const l of String(t || '').split('\n')) if (/^\s*\*\*합계/.test(l)) sums.push(amounts(l.replace(/\(.*$/, '')).slice(0, 2));
-  if (!sums.filter((s) => s.length).length) return modelQuote || '';
+  for (const t of botTexts) for (const l of String(t || '').split('\n')) if (/^\s*(?:[-·•]\s*)?\*\*(합계|Total)/i.test(l)) sums.push(amounts(l.replace(/\(.*$/, '')).slice(0, 2));
+  // 계산기 결과도, 손님에게 보여 준 합계 줄도 없는데 모델이 금액을 적었으면 모델이 직접 계산한 금액 → 확인 표시(S25-e: 172인분 702,000원)
+  if (!sums.filter((s) => s.length).length) return q.length ? `${modelQuote} (계산기 결과 없음 — 견적 확인 필요)` : (modelQuote || '');
   for (let i = sums.length - 1; i >= 0; i--) if (modelQuote && same(sums[i])) return amountText(sums[i]) + quoteExtra(modelQuote);
   const last = amountText(sums.filter((s) => s.length).pop(), false);
   return modelQuote ? `${modelQuote} / 대화 마지막 합계: ${last} (견적 확인 필요)` : `${last} (견적 확인 필요)`;
@@ -180,7 +181,7 @@ async function handleLead(input, ctx = {}) {
   // 합계가 나온 가장 최근 답의 합계 줄 전부(손님이 두 안을 비교한 답이면 둘 다) — 마지막 줄 하나만 보면 고르지 않은 안을 이전 견적으로 잡던 일
   let lastSums = [];
   for (let i = history.length - 1; i >= 0 && !lastSums.length; i--) {
-    lastSums = String(history[i] || '').split('\n').filter((x) => /^\s*\*\*합계/.test(x))
+    lastSums = String(history[i] || '').split('\n').filter((x) => /^\s*(?:[-·•]\s*)?\*\*(합계|Total)/i.test(x))
       .map((l) => amounts(l.replace(/\(.*$/, '')).slice(0, 2)).filter((n) => n.length);
   }
   const lastSum = lastSums.length ? lastSums[lastSums.length - 1] : null;
@@ -198,12 +199,15 @@ async function handleLead(input, ctx = {}) {
   if (p.contactName === '미기재' && !org) tags.push('이름 미확인');
   if (/최소 금액 미달/.test(quote)) tags.push('최소 금액 미달');
   const allText = Object.values(p).filter((v) => typeof v === 'string').join(' ');
+  // 사무실 답(11-20 질문 9): "그냥 전화 주세요" 손님은 정보와 함께 담당자에게 → 상태 줄에 표시
+  if (p.callTime || /전화\s?(주세요|주시|부탁|원함|원하|상담|요청)|통화\s?(원|부탁|희망|요청)/.test(p.note || '')) tags.push('전화 요청');
   const warn = [];
   if (/개인정보\s*삭제|삭제\s*요청|번호\s*(지워|삭제)/.test(p.note || '')) warn.push('⚠ 개인정보 삭제 요청 — 연락 전 처리 여부 확인');
   if (/본인 번호 아님/.test(p.note || '')) warn.push('⚠ 본인 번호 아님(손님 말) — 이 번호로 연락해도 되는지 확인');
   if (/손님 글·확인 안 됨/.test(allText)) warn.push('⚠ 손님이 쓴 링크·머리글 포함 — 내용 확인');
   if (ctx.dateNote) warn.push('⚠ 행사 날짜 연도 확인');
-  if (/견적 확인 필요/.test(quote)) warn.push('⚠ 챗봇이 적은 금액과 계산 결과가 다름 — 견적 확인');
+  if (/계산기 결과 없음/.test(quote)) warn.push('⚠ 계산기로 계산하지 않은 금액 — 견적 다시 계산');
+  else if (/견적 확인 필요/.test(quote)) warn.push('⚠ 챗봇이 적은 금액과 계산 결과가 다름 — 견적 확인');
   // 추가 접수에서 견적이 바뀌었으면 이전 → 지금
   const lc = [...calcs].reverse().find((c) => c && c.status === 'ok');
   const nowNums = lc ? (lc.mode === 'range' ? [lc.rangeLow, lc.rangeHigh] : [lc.subtotal]) : null;
@@ -244,6 +248,10 @@ async function handleLead(input, ctx = {}) {
   if (p.region) lines.push(`지역: ${p.region}`);
   if (p.menu) lines.push(`메뉴/인분: ${p.menu}`);
   if (p.drinkChoice) lines.push(`음료 구성: ${p.drinkChoice}`);
+  // 이번 요청에 계산이 없으면(견적 다음 턴에 접수) 앞서 보여 준 답의 "차량 N대"로
+  const prevTrucks = Number(((ctx.botTexts || []).join('\n').match(/차량\s?(\d)대/g) || []).map((s) => s.replace(/\D/g, '')).pop() || 1);
+  const trucks = lc ? lc.trucks || 1 : prevTrucks;
+  if (trucks > 1) lines.push(`차량: ${trucks}대(인분 합계 500 이상, 출장비 ${trucks}대분)`);
   if (power) lines.push(`전기: ${power}`);
   if (banner) lines.push(`현수막: ${banner}`);
   if (quote) lines.push(`견적: ${quote}`);
@@ -277,6 +285,17 @@ function todayText() {
   const d = new Date(Date.now() + 9 * 3600 * 1000);
   const w = '일월화수목금토'[d.getUTCDay()];
   return `오늘: ${d.toISOString().slice(0, 10)} (${w}) — 한국 시간`;
+}
+
+// 접수 뒤 연락 안내(사무실 답 11-20: 영업시간엔 몇 분 안에, 길어도 10~20분) — 영업시간 평일 10~19시, 공휴일은 모름
+function contactWhen() {
+  const d = new Date(Date.now() + 9 * 3600 * 1000);
+  const day = d.getUTCDay(), h = d.getUTCHours();
+  const weekday = day >= 1 && day <= 5;
+  if (weekday && h >= 10 && h < 19) return '영업시간이라 보통 몇 분 안에(늦어도 20분 안팎) 담당자가 연락드려요.';
+  if (weekday && h < 10) return '오늘 오전 10시 영업 시작 후 담당자가 바로 연락드려요.';
+  const next = day === 5 || day === 6 ? '월요일' : '내일';   // 금 저녁·토 → 월, 일·평일 저녁 → 내일
+  return `지금은 영업시간(평일 10~19시)이 아니라 ${next} 오전에 담당자가 연락드려요.`;
 }
 
 // 커피 세트(2·4·7종) 견적에서 음료 구성을 묻는 답 → { kind:'drinks', count, defaults, options }
@@ -346,8 +365,8 @@ module.exports = async function handler(req, res) {
     const leadBefore = leadSent;   // 이번 요청 전에 이미 접수된 대화인지(견적 변경 자동 전달 판단용)
     // 이미 접수한 대화면 모델에게도 알림(앞 턴의 도구 호출은 모델에 가지 않아 "접수 안 됐다"고 단정하던 일)
     const leadNote = leadSent ? [{ type: 'text', text: '[봇에게] 이 대화에서는 이미 상담 접수가 됐어요(담당자에게 전달됨). 손님이 접수 여부를 물으면 "네, 접수돼 있어요"라고 답하고, 정보를 보태면 submit_lead로 추가하세요. 내부 도구 이름은 말하지 않습니다.' }] : [];
-    // 도구 호출이 나오면 실행하고 다시 물어보는 루프 (최대 3회)
-    for (let i = 0; i < 3; i++) {
+    // 도구 호출이 나오면 실행하고 다시 물어보는 루프 (최대 4회 — Haiku는 계산 2번 + 접수를 한 답에서 해 3회를 다 쓰는 일이 있었음)
+    for (let i = 0; i < 4; i++) {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -357,7 +376,7 @@ module.exports = async function handler(req, res) {
         },
         body: JSON.stringify({
           model: MODEL,
-          max_tokens: IS_S55 ? 4096 : 1024,
+          max_tokens: 4096,   // Haiku 5.5는 생각이 기본으로 켜져 1024면 답이 문장 중간에서 잘렸음(24문항 중 2개)
           ...(IS_S55 ? { thinking: { type: S55_THINKING }, output_config: { effort: S55_EFFORT } } : {}),
           // 프롬프트 캐싱: 고정 지식(system)에 캐시 지점을 두면 tools+system이 함께 캐시된다.
           // 반복 요청 시 이 부분은 재계산하지 않고 캐시에서 읽어 비용·속도를 크게 줄인다(답변 품질은 동일).
@@ -365,6 +384,7 @@ module.exports = async function handler(req, res) {
             { type: 'text', text: SYSTEM_KNOWLEDGE },
             { type: 'text', text: menuText, cache_control: { type: 'ephemeral' } },
             { type: 'text', text: todayText() },   // 날짜는 캐시 지점 뒤에(매일 바뀜)
+            { type: 'text', text: `[봇에게] 접수 뒤 담당자 연락 안내는 "곧 연락드릴게요" 대신 이 문장을 그대로 쓰세요: "${contactWhen()}"` },
             ...leadNote,
           ],
           tools,
@@ -475,7 +495,8 @@ module.exports = async function handler(req, res) {
       // 연락처 요청은 한 대화에 한 번만: 앞 답에서 이미 물었고 아직 번호가 없으면 이번 답의 연락처 요청 줄을 뺌
       // (매뉴얼에 "한 번만"이 있어도 다시 계산할 때마다 또 묻던 일 — 손님이 진행 의사를 밝힌 답은 예외)
       // 모델이 "연락처만 남겨 주시겠어요?", 목록 줄 "- 연락처(휴대폰 번호)"처럼 모양을 바꿔 다시 묻던 일 → 연락처를 말하는 문장이면 모양과 상관없이 봄
-      const CONTACT = /연락처|휴대폰\s?번호|핸드폰\s?번호|전화\s?번호/;
+      // "남겨 주시면 접수해 드릴게요"처럼 '연락처' 없이 번호를 다시 조르던 말도 포함(실제 상담 시험 55·70)
+      const CONTACT = /연락처|휴대폰\s?번호|핸드폰\s?번호|전화\s?번호|번호를?\s?남겨|남겨\s?주신\s?번호|남겨\s?주(시면|세요|시겠).{0,12}(접수|연락)/;
       const askedContact = messages.some((m) => m.role === 'assistant' && CONTACT.test(String(m.content || '')));
       const lastUser = String((convo.filter((m) => m.role === 'user' && typeof m.content === 'string').pop() || {}).content || '');
       // 앞 답이 진행 질문(NEXT_STEP)으로 끝났고 손님이 "네/그걸로" 등으로 받았으면 진행 의사로 봄
@@ -494,16 +515,31 @@ module.exports = async function handler(req, res) {
         }).filter((l) => l !== null).join('\n').replace(/\n{3,}/g, '\n\n').trim();
         // 연락처를 다시 묻지 않는 대신, 견적만 보여 주고 끝나 손님이 다음에 뭘 할지 모르는 일이 없게 진행 질문으로 마무리
         // 모델이 같은 진행 질문을 이미 썼으면(마침표로 끝나 '?' 판정에 안 걸림) 다시 붙이지 않음
-        if (/합계/.test(reply) && !/[?？]\s*$/.test(reply) && !/진행하실까요/.test(reply)) reply += '\n\n' + NEXT_STEP;
+        if (/합계/.test(reply) && !/[?？]\s*$/.test(reply) && !/진행하실(까요|지|래요)|진행할까요|진행하시겠어요/.test(reply)) reply += '\n\n' + NEXT_STEP;   // "진행하실지 알려 주세요"로 이미 물었는데 또 붙던 일(HKM-FS-09)
+      }
+      // 대표번호는 손님이 전화·통화를 원하거나, 연락이 안 온다·급하다고 하거나, 번호를 안 남기겠다·삭제해 달라고 할 때만
+      // (실제 상담 시험: 작별 인사·진행 상황 질문·이탈 손님 답 끝에 "대표번호로도 문의하실 수 있어요"가 습관처럼 붙던 일)
+      const PHONE_OK = /전화|통화|연락\s?(이|을|도)?\s?(안|없|못|주)|급(해|하|한|히)|번호.{0,8}(싫|안\s?남|못\s?남|말고|부담)|남기기\s?(싫|어렵|부담)|삭제|지워|대표\s?번호|사무실\s?번호|고객\s?센터|(연락처|번호)\s?(좀|뭐|알려|어떻게|있)/;
+      if (/1877-6901/.test(reply) && !PHONE_OK.test(lastUser)) {
+        reply = reply.split('\n').map((l) => {
+          if (!/1877-6901/.test(l)) return l;
+          const rest = l.split(/(?<=[.?!])\s+/).filter((s) => !/1877-6901/.test(s)).join(' ').trim();
+          return rest || null;
+        }).filter((l) => l !== null).join('\n').replace(/\n{3,}/g, '\n\n').trim() || reply;
       }
       // 이미 접수한 대화에서 메뉴·수량을 바꿔 다시 계산했는데 모델이 추가 접수를 안 했으면, 담당자 문자에 옛 견적이 남지 않게 서버가 대신 보냄
       // (실제 상담 시험: 120개로 접수 → "140개로 견적 부탁"에 다시 계산만 하고 접수 갱신 없음)
       const lastCalc = calcs.filter((c) => c && c.status === 'ok').pop();
       // 부가세만 묻는 등 같은 금액으로 다시 계산한 경우는 보내지 않음(앞서 안내한 합계 줄 중 숫자가 같은 게 있으면)
       const digits = (s) => String(s || '').replace(/[^\d~]/g, '');
-      const prevSums = messages.filter((m) => m.role === 'assistant').map((m) => String(m.content || '')).join('\n').match(/합계[^\n]*/g) || [];
+      const prevSums = messages.filter((m) => m.role === 'assistant').map((m) => String(m.content || '')).join('\n').match(/(합계|Total)[^\n]*/g) || [];   // 영어 답은 "Total"
       const sameQuote = lastCalc && prevSums.some((l) => digits(l) === digits(lastCalc.summaryLine));
-      if (leadBefore && !meta.lead && lastCalc && !sameQuote) {
+      // 같은 답에서 서로 다른 견적을 여럿 계산했으면 손님이 고르기 전의 비교(예: 발전기·현수막을 넣으면 얼마) → 자동 전달 안 함(HKM-FS-14)
+      const shownOptions = new Set(calcs.filter((c) => c && c.status === 'ok').map((c) => c.summaryLine)).size;
+      // 메뉴·인분이 앞서 보여 준 그대로면(현수막·발전기 같은 옵션만 넣어 본 계산) 손님이 바꾼 게 아님 → 자동 전달 안 함
+      const prevBotText = messages.filter((m) => m.role === 'assistant').map((m) => String(m.content || '')).join('\n');
+      const sameItems = lastCalc && (lastCalc.items || []).length > 0 && (lastCalc.items || []).every((i) => new RegExp(`${i.servings}\\s?(인분|잔|개|명|servings?|cups?|portions?)`, 'i').test(prevBotText));
+      if (leadBefore && !meta.lead && lastCalc && !sameQuote && shownOptions <= 1 && !sameItems) {
         const phones = userTexts.match(/01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/g) || [];
         const input = {
           contactName: '(앞 접수와 같은 손님)',
@@ -540,7 +576,7 @@ module.exports = async function handler(req, res) {
 
     // 도구를 여러 번 부르다 최종 답을 못 받고 끝난 경우: 이번 요청에서 이미 접수했으면 손님이 다시 보내 중복 접수되지 않게 접수됐다고 알림
     if (leadKind) {
-      const done = english ? 'Your request has been received. Our staff will contact you soon.' : '접수는 됐어요. 담당자가 확인해서 곧 연락드릴게요.';
+      const done = english ? 'Your request has been received. Our staff will contact you soon.' : '접수는 됐어요. ' + contactWhen();
       return res.status(200).json({ reply: done + '\n\n' + (english ? LEAD_MARK.en : leadKind === 'update' ? LEAD_MARK.koUpdate : LEAD_MARK.ko) });
     }
     return res.status(200).json({ reply: '죄송해요, 잠시 후 다시 시도해 주세요.' });

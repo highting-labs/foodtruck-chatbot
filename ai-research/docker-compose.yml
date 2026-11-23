@@ -1,0 +1,24 @@
+# 사내 AI PoC용 로컬 구성 — 이 PC 안에서만(127.0.0.1) 열림. 운영 DB(Supabase)와 무관.
+#   docker compose -f ai-research/docker-compose.yml up -d
+# Ollama는 Windows 앱으로 설치해 GPU를 그대로 씀(컨테이너 GPU 연결 설정이 필요 없어서). 서버 전환 시 ollama 서비스 주석을 풀면 됨.
+name: ftc-ai-poc
+services:
+  pgvector:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: poc
+      POSTGRES_PASSWORD: poc-local-only   # 로컬 시험 전용, 바깥 포트 바인딩 없음(127.0.0.1)
+      POSTGRES_DB: ftc_rag
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - ftc_rag_data:/var/lib/postgresql/data
+      - ./rag/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+  # ollama:
+  #   image: ollama/ollama:0.40.16
+  #   ports: ["127.0.0.1:11434:11434"]
+  #   volumes: [ollama_models:/root/.ollama]
+  #   deploy: { resources: { reservations: { devices: [{ driver: nvidia, count: all, capabilities: [gpu] }] } } }
+volumes:
+  ftc_rag_data:
+  # ollama_models:
