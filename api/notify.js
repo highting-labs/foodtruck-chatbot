@@ -2,6 +2,9 @@ const crypto = require('crypto');
 const { logLead } = require('../lib/sheet-log.js');
 const { logChat } = require('../lib/chat-log.js');
 const { checkRate } = require('../lib/rate-limit.js');
+const { alertFailure } = require('../lib/slack-alert.js');
+// 간편 견적 접수 문자가 안 나가면 담당자가 모름 → 슬랙으로 바로 알림(손님 이름·번호는 빼고, 11-23 잔액 0원 사고)
+const smsFail = (reason) => alertFailure('sms', { where: '간편 견적 접수', reason });
 
 function readRaw(req) {
   return new Promise((resolve) => {
@@ -78,6 +81,7 @@ module.exports = async function handler(req, res) {
   }
 
   if (!apiKey || !apiSecret || !from || !to) {
+    await smsFail('환경변수 미설정(SOLAPI_*·ALERT_TO)');
     res.status(500).json({ ok: false, error: '환경변수가 비어 있습니다. SOLAPI_API_KEY, SOLAPI_API_SECRET, SOLAPI_SENDER, ALERT_TO 를 확인하세요.' });
     return;
   }
@@ -135,6 +139,7 @@ module.exports = async function handler(req, res) {
         res.status(200).json({ ok: true, channel: 'sms-fallback' });
         return;
       }
+      await smsFail(pickReason(sms.result, sms.status) || pickReason(ata.result, ata.status));
       res.status(502).json({ ok: false, reason: pickReason(sms.result, sms.status) || pickReason(ata.result, ata.status) });
       return;
     }
@@ -145,8 +150,10 @@ module.exports = async function handler(req, res) {
       res.status(200).json({ ok: true, channel: 'sms' });
       return;
     }
+    await smsFail(pickReason(sms.result, sms.status));
     res.status(502).json({ ok: false, reason: pickReason(sms.result, sms.status) });
   } catch (e) {
+    await smsFail(String((e && e.message) || e));
     res.status(502).json({ ok: false, reason: String((e && e.message) || e) });
   }
 };
