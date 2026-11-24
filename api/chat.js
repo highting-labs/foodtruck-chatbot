@@ -648,7 +648,17 @@ module.exports = async function handler(req, res) {
       if (gate && !meta.lead) {
         const askNow = calcs.some((c) => c._gate === 'ask'), rangeNow = calcs.some((c) => c._gate === 'range');
         if (gate === 'ask' && (askNow || cardShown)) {
-          card = 'ask';
+          // 카드를 이미 본 손님이 답하지 않고 질문을 이어 가면 큰 카드를 다시 띄우지 않고 작은 버튼 두 개만(시험 세션: 카드 반복 31/35)
+          // 단, 손님이 진행하겠다고 하면 큰 카드를 다시 띄우고 모델의 연락처 요청 글은 그대로 둠
+          // (그 글에서 연락처 줄만 빼면 "아래 두 가지만" 뒤에 한 줄만 남음 — 11-23과 같은 모양, CC3-01)
+          const goNow = wantsGo || proceedAsk;
+          card = cardShown && !goNow ? 'mini' : 'ask';
+          // 그 밖에는 카드가 받으니 모델이 쓴 연락처 요청 문장을 뺌(카드와 이중 요청 — FC-FS-08)
+          if (!goNow) reply = reply.split('\n').map((l) => {
+            if (!CONTACT.test(l)) return l;
+            if (/^\s*([-·•*]|\d+\.)\s/.test(l)) return null;
+            return l.split(/(?<=[.?!])\s+/).filter((s) => !CONTACT.test(s)).join(' ').trim() || null;
+          }).filter((l) => l !== null).join('\n').replace(/\n{3,}/g, '\n\n').trim();
           if (askNow && !cardShown) reply = (reply ? reply + '\n\n' : '') + (english ? CARD_LINE.en : CARD_LINE.ko);
         } else if (gate === 'range') {
           card = 'reopen';
@@ -691,6 +701,9 @@ module.exports = async function handler(req, res) {
       reply = reply.replace(LEAD_MARK_ANY, '').replace(/\n{3,}/g, '\n\n').trim();   // 표시 줄은 서버만 붙임
       // 모델이 쓴 "✅ 접수가 완료됐어요" 같은 줄은 ✅만 빼고 글은 남김 — 접수 표시(✅)는 서버 줄 하나만(운영 시험 11-23: ✅ 줄 두 개)
       reply = reply.replace(/^([ \t]*)✅\s*/gm, '$1');
+      // 모델이 접수 표시 문장을 그대로 썼으면(✅만 빠진 같은 문장) 줄째 뺌 — 서버 줄과 같은 문장이 두 번 보이던 일(FC-FS-05)
+      const markTexts = LEAD_MARKS.map((t) => t.replace(/^✅\s*/, ''));
+      reply = reply.split('\n').filter((l) => !markTexts.includes(l.trim())).join('\n').replace(/\n{3,}/g, '\n\n').trim();
       if (leadKind) reply += '\n\n' + (english ? LEAD_MARK.en : leadKind === 'update' ? LEAD_MARK.koUpdate : LEAD_MARK.ko);
       // 상담 기록은 답을 먼저 보낸 뒤 저장 (손님 대기 시간 줄이기). Vercel이 응답 뒤에도 끝까지 기다리게 waitUntil 사용,
       // 그 기능이 없는 곳(로컬 시험 서버 등)에서는 예전처럼 저장하고 나서 보냄

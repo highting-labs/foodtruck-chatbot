@@ -1046,6 +1046,11 @@ document.getElementById('calc').onclick=()=>{
       renderChips([{ label: '견적서 받기', action: function(){ renderContactCard('open'); } }, { label: '↺ 새로 시작', action: restart }]);
       return;
     }
+    // 카드를 이미 본 뒤 답하지 않고 대화를 이어 간 손님: 큰 카드 대신 작은 버튼 두 개
+    if (mode === 'mini') {
+      renderChips([{ label: '견적서 받기', action: function(){ renderContactCard('ask'); } }, { label: CARD_SKIP }, { label: '↺ 새로 시작', action: restart }]);
+      return;
+    }
     chipsEl.innerHTML = '';
     const box = document.createElement('div'); box.className = 'cpick';
     box.innerHTML = '<div class="ch">견적서 받을 곳</div>'
@@ -1085,6 +1090,7 @@ document.getElementById('calc').onclick=()=>{
     const lastBot = (history.filter(function(m){ return m.role === 'assistant'; }).pop() || {}).content || '';
     if (lastBot.indexOf('견적서를 받으실 연락처') >= 0) return 'ask';
     if (history.some(function(m){ return m.role === 'user' && m.content.trim() === CARD_SKIP; })) return 'reopen';
+    if (history.some(function(m){ return m.role === 'assistant' && m.content.indexOf('견적서를 받으실 연락처') >= 0; })) return 'mini';
     return null;
   }
 
@@ -1128,7 +1134,7 @@ document.getElementById('calc').onclick=()=>{
         history.push({ role: 'assistant', content: reply });
         keep();
         if (data.picker && data.picker.kind === 'drinks') renderDrinkPicker(data.picker);
-        else if (data.card === 'ask' || data.card === 'reopen') renderContactCard(data.card);
+        else if (data.card === 'ask' || data.card === 'reopen' || data.card === 'mini') renderContactCard(data.card);
         else renderChips([{ label: '↺ 새로 시작', action: restart }]);   // 대화 도중에도 처음부터 할 수 있게(전에는 새로고침 뒤에만 보였음)
       }
     } catch (e) {
