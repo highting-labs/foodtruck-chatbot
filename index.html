@@ -295,7 +295,7 @@ select:focus,input:focus,.body textarea:focus{outline:none;border-color:var(--bl
 .cpick .ce:empty{display:none}
 .cpick .go{min-height:46px;border:0;border-radius:12px;background:var(--blue);color:#fff;font-size:15px;font-weight:800;cursor:pointer}
 .cpick .pv{font-size:12px;color:var(--ink-3);line-height:1.5}
-.cpick .sk{align-self:center;border:0;background:none;color:var(--ink-3);font-size:13px;text-decoration:underline;cursor:pointer;padding:6px}
+.cpick .sk{min-height:44px;border:1px solid var(--fline);border-radius:12px;background:var(--white);color:var(--ink-2);font-size:14px;font-weight:700;cursor:pointer}
 @media (min-width:960px){ .cpick{padding-inline:28px} }
 .composer .field{flex:1;display:flex;align-items:center;min-height:48px;background:var(--bot);border:1px solid transparent;border-radius:24px;padding:2px 6px 2px 16px;transition:border-color 150ms ease}
 .composer .field:focus-within{border-color:var(--blue)}
@@ -1040,7 +1040,7 @@ document.getElementById('calc').onclick=()=>{
 
   // 연락처 카드: 금액 직전에 견적서 받을 곳(번호·이메일)을 받음. 제출·건너뛰기는 손님 말로 보냄(서버 api/chat.js와 같은 글자)
   // mode 'ask' = 카드(건너뛰기 포함) / 'reopen' = 건너뛴 뒤 '견적서 받기' 버튼(누르면 카드, 건너뛰기 없음)
-  const CARD_SUBMIT = '견적서 받을 곳: ', CARD_SKIP = '나중에 할게요, 대략 금액만 볼게요';
+  const CARD_SUBMIT = '견적서 받을 곳: ', CARD_SKIP = '번호 없이 대략 금액만 보기';
   function renderContactCard(mode){
     if (mode === 'reopen') {
       renderChips([{ label: '견적서 받기', action: function(){ renderContactCard('open'); } }, { label: '↺ 새로 시작', action: restart }]);
@@ -1053,7 +1053,7 @@ document.getElementById('calc').onclick=()=>{
       + '<input id="cardContact" type="tel" inputmode="numeric" autocomplete="tel" placeholder="010-1234-5678" aria-label="연락처">'
       + '<div class="ce" role="alert"></div>'
       + '<button type="button" class="go">견적서 받기</button>'
-      + '<div class="pv">항목별 금액을 바로 보여 드리고, 담당자가 견적서를 보내 드리며 확인 연락은 1번 드려요. 견적 안내와 연락에만 쓰고, 요청하시면 지워 드려요.</div>'
+      + '<div class="pv">결재 전·업체 비교 중이어도 괜찮아요. 항목별 금액을 바로 보여 드리고, 담당자가 견적서를 보내 드려요(이메일이면 메일로). 견적 안내에만 쓰고, 요청하시면 지워 드려요.</div>'
       + (mode === 'ask' ? '<button type="button" class="sk">' + CARD_SKIP + '</button>' : '');
     const inp = box.querySelector('input'), err = box.querySelector('.ce');
     let kind = 'tel';
