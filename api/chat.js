@@ -70,7 +70,7 @@ const tools = [
       type: 'object',
       properties: {
         contactName: { type: 'string', description: '담당자명 또는 회사명. 아직 모르면 "미기재"' },
-        phone: { type: 'string', description: '연락처(전화번호)' },
+        phone: { type: 'string', description: '연락처(전화번호). 이메일만 받았으면 비움(phone·email 중 하나는 꼭)' },
         region: { type: 'string', description: '행사 지역(있으면)' },
         menu: { type: 'string', description: '문의 메뉴·인분 요약(있으면)' },
         quote: { type: 'string', description: '안내한 견적 금액 요약(있으면)' },
@@ -87,10 +87,27 @@ const tools = [
         callTime: { type: 'string', description: '손님이 먼저 말한 통화 편한 시간대(예: 오후 2~5시). 묻지 말고 손님이 말했을 때만' },
         isUpdate: { type: 'boolean', description: '이 대화에서 submit_lead를 이미 한 번 불렀고, 정보를 보태려고 다시 부르는 경우에만 true. 처음 부르면 넣지 않음' },
       },
-      required: ['contactName', 'phone'],
+      required: ['contactName'],
     },
   },
 ];
+
+// 연락처 카드(금액 직전에 번호·이메일 받기) — 판단은 대화 기록만으로(서버는 상태를 따로 갖지 않음)
+// 카드 문장·건너뛰기 말·제출 말은 화면과 같은 글자(바꾸면 index.html도 같이)
+const CARD_LINE = { ko: '견적서를 받으실 연락처(휴대폰·회사번호 또는 이메일)를 아래에 남겨 주시면 항목별 금액을 바로 보여 드릴게요. 번호 없이 대략 금액만 보셔도 괜찮아요.', en: 'Leave a phone number or email below and I will show the itemized quote right away. You can also just see a rough range without it.' };
+const RANGE_LINE = { ko: '항목별 금액과 견적서는 아래 [견적서 받기]로 번호나 이메일을 남겨 주시면 바로 보여 드릴게요.', en: 'For the itemized quote, tap [Get quote] below and leave a phone number or email.' };
+const SKIP_TEXT = /^\s*(번호 없이 대략 금액만 보기|나중에 할게요, 대략 금액만 볼게요|See a rough range without contact|Maybe later, just show me a rough range)\s*$/;
+// 카드 버튼 대신 손님이 직접 "번호 남기기 싫어요, 금액만" 같이 쳐도 건너뛴 것으로 봄(같은 카드를 두 번 띄우지 않게)
+const SKIP_SAID = /번호.{0,8}(싫|안\s?남|못\s?남|말고|부담)|남기기\s?(싫|어렵|부담)|연락처\s?(없이|는\s?싫|싫|안\s?남|못\s?남)|(그냥|일단|대략)\s?(금액|가격)|(금액|가격)만\s?(알려|보여|볼게|궁금)|no (phone|contact)|without (my )?(phone|contact)|just (the )?(price|range)/i;
+const PHONE_RE = /01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}|0[2-6]\d?[-\s.]?\d{3,4}[-\s.]?\d{4}/;   // 휴대폰 + 회사 유선(02·031 등)
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+const man = (n, up) => (up ? Math.ceil(n / 10000) : Math.floor(n / 10000)) * 10000;   // 만 원 단위로
+// 건너뛴 손님에게 보여 줄 대략 범위: 큰 행사는 계산기 범위, 작은 건(확정가)은 합계~합계×1.1 — 둘 다 만 원 단위
+// (작은 건을 합계×0.9부터 보여 주면 없는 할인 여지로 읽혀서 위로만 둠 — 페르소나 재시험 대표 11-24. 기준은 대표 결정 대기)
+function roughRange(c) {
+  const lo = c.mode === 'range' ? c.rangeLow : c.subtotal, hi = c.mode === 'range' ? c.rangeHigh : c.subtotal * 1.1;
+  return [man(lo, false), man(hi, true)];
+}
 
 // 접수가 실제로 된 답 끝에 서버가 붙이는 정해진 한 줄 — 화면이 답 글을 그대로 다시 보내므로 다음 턴에 이 줄로 '이미 접수됨'을 안다
 // (서버는 이전 턴의 도구 호출을 받지 못함. 모델이 "접수 안 됐다"고 단정하던 일 막기)
@@ -208,6 +225,8 @@ async function handleLead(input, ctx = {}) {
   const warn = [];
   if (/개인정보\s*삭제|삭제\s*요청|번호\s*(지워|삭제)/.test(p.note || '')) warn.push('⚠ 개인정보 삭제 요청 — 연락 전 처리 여부 확인');
   if (/본인 번호 아님/.test(p.note || '')) warn.push('⚠ 본인 번호 아님(손님 말) — 이 번호로 연락해도 되는지 확인');
+  if (!p.phone && p.email) tags.push('이메일만');
+  if (/^\s*0(2|[3-6]\d)/.test(p.phone || '')) tags.push('회사 유선(문자 불가)');
   if (/손님 글·확인 안 됨/.test(allText)) warn.push('⚠ 손님이 쓴 링크·머리글 포함 — 내용 확인');
   if (ctx.dateNote) warn.push('⚠ 행사 날짜 연도 확인');
   if (/계산기 결과 없음/.test(quote)) warn.push('⚠ 계산기로 계산하지 않은 금액 — 견적 다시 계산');
@@ -261,6 +280,16 @@ async function handleLead(input, ctx = {}) {
   if (power) lines.push(`전기: ${power}`);
   if (banner) lines.push(`현수막: ${banner}`);
   if (quote) lines.push(`견적: ${quote}`);
+  // 연락처 카드로 들어온 접수: 손님이 무엇을 봤고 무엇을 안내받았는지(첫 통화에서 "어디까지 보셨어요?"를 묻지 않게 — 페르소나 시험 11-24)
+  // 숫자로: 건너뛴 손님이 처음 본 대략 범위 → 이번에 본 항목별 금액(부가세 별도). 카드 없이 번호를 준 접수에도 같은 줄(경로마다 문자 모양이 다르지 않게)
+  const cf = ctx.card || {};
+  if (!p.isUpdate && !auto) {
+    const roughs = [...(ctx.botTexts || []).join('\n').matchAll(/대략\s*\**\s*(\d[\d,]*)만\s*~\s*(\d[\d,]*)만/g)];
+    const rough = roughs.length ? `연락처 전 대략 ${roughs[roughs.length - 1][1]}만~${roughs[roughs.length - 1][2]}만 원 → ` : '';
+    const seen = nowNums ? `항목별 ${fmt(nowNums)}` : lastSum ? `항목별 ${fmt(lastSum)}` : '아직 금액 안 봄';
+    lines.push(`손님이 본 금액: ${rough}${seen} (부가세 별도)`);
+    lines.push(`안내한 것: ${!p.phone && p.email ? '견적서는 메일로 보내 드린다고 함(전화번호 없음)' : '담당자가 견적서 보내고 확인 연락'}${cf.shown ? ' · 연락처 카드로 받음' : ''} (할인·차량 확보는 약속 안 함)`);
+  }
   const norm = (s) => String(s).replace(/\s/g, '').replace(/\d{4}-/g, '');   // 연도 보정으로 연도만 달라진 건 같은 글로 봄
   if (p.datetime && (!when || norm(p.datetime) !== norm(when))) lines.push(`일정: ${p.datetime}`);   // 날짜·시간 줄과 같은 글일 때만 생략(여러 날 일정 등은 남김)
   if (p.note) lines.push(`문의: ${p.note}`);
@@ -274,7 +303,7 @@ async function handleLead(input, ctx = {}) {
   await logLead({
     source: '대화형챗봇',
     contactName: sheetSafe(p.contactName),
-    phone: sheetSafe(p.phone),
+    phone: sheetSafe(p.phone || (p.email ? `이메일 ${p.email}` : '')),
     region: sheetSafe(p.region),
     menu: sheetSafe(p.menu),
     quote: sheetSafe(quote),
@@ -344,7 +373,7 @@ module.exports = async function handler(req, res) {
     // 호출 횟수 제한 — 걸리면 AI를 부르지 않고 안내만 (손님 화면엔 보통 답처럼 보임)
     const rate = await checkRate('chat', req);
     if (!rate.ok) return res.status(200).json({ reply: limitMessage(rate.why), limited: rate.why });
-    const lastSaysPhone = /01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/.test(messages[messages.length - 1].content);   // 연락처를 남기는 말은 길어도 받아서 접수
+    const lastSaysPhone = /01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/.test(messages[messages.length - 1].content) || EMAIL_RE.test(messages[messages.length - 1].content);   // 연락처를 남기는 말은 길어도 받아서 접수
     if (messages.filter(m => m.role === 'user').length > MAX_USER_TURNS && !lastSaysPhone) {
       return res.status(200).json({ reply: '대화가 길어져서 여기부터는 담당자가 직접 도와드리는 게 정확해요. 대표번호 1877-6901로 전화 주시거나, 성함과 연락처를 남겨 주시면 담당자가 연락드릴게요. 새로 상담하시려면 위의 ↺ 새로 시작을 눌러 주세요.', limited: 'turns' });
     }
@@ -363,7 +392,9 @@ module.exports = async function handler(req, res) {
     // 메뉴명·이름·지명만 한글로 섞어 쓰는 외국 손님이 있어 "한글이 없을 때만"이 아니라 양으로 판단:
     // 일본어 가나가 한 글자라도 있으면 외국어 / 아니면 한자 수 + 영문자 수÷2(한글 1글자≈영문 2글자) ≥ 한글 수이면 외국어
     const FOREIGN = /[A-Za-z]{2,}|[぀-ヿ一-鿿]/;
-    const lastWords = [...messages].reverse().find((m) => m.role === 'user' && (/[가-힣]/.test(m.content) || FOREIGN.test(m.content)));
+    // 이메일 주소의 영문자는 언어 판단에서 뺌(연락처 카드로 이메일만 남긴 한국 손님에게 영어 안내가 나가던 일)
+    const langText = (s) => String(s).replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, ' ');
+    const lastWords = [...messages].reverse().map((m) => ({ role: m.role, content: langText(m.content) })).find((m) => m.role === 'user' && (/[가-힣]/.test(m.content) || FOREIGN.test(m.content)));
     const count = (s, re) => (String(s).match(re) || []).length;
     const english = !!lastWords && FOREIGN.test(lastWords.content) && (/[぀-ヿ]/.test(lastWords.content)
       || count(lastWords.content, /[一-鿿]/g) + count(lastWords.content, /[A-Za-z]/g) / 2 >= count(lastWords.content, /[가-힣]/g));
@@ -378,6 +409,18 @@ module.exports = async function handler(req, res) {
       .matchAll(/(?:출장비|Travel fee)\s?\(([^),]+)/gi)].map((m) => m[1].trim());
     const knownRegion = regionHits.length ? regionHits[regionHits.length - 1] : '';
     const regionNote = knownRegion ? [{ type: 'text', text: `[봇에게] 이 대화에서 이미 받은 행사 지역: ${knownRegion} — 메뉴·인분을 바꿔도 지역은 다시 묻지 말고 이 지역으로 계산하세요(손님이 지역을 바꾸면 그때만 새 지역).` }] : [];
+    // 연락처 카드: 연락처(번호·이메일)를 받기 전에는 금액을 주지 않음(ask), 손님이 카드를 건너뛰었으면 대략 범위만(range)
+    const userAll = messages.filter((m) => m.role === 'user').map((m) => m.content).join(' ');
+    const isCard = (m) => m.role === 'assistant' && (m.content.includes(CARD_LINE.ko) || m.content.includes(CARD_LINE.en));
+    const cardShown = messages.some(isCard);
+    // 직접 친 거절 말은 카드를 한 번 본 뒤에만 건너뛰기로 봄("금액만 알려 주세요"로 시작한 손님도 카드는 한 번 보게)
+    const cardSkipped = messages.some((m, i) => m.role === 'user' && (SKIP_TEXT.test(m.content) || (SKIP_SAID.test(m.content) && messages.slice(0, i).some(isCard))));
+    const hasContact = PHONE_RE.test(userAll) || EMAIL_RE.test(userAll) || leadSent;
+    const emailOnly = EMAIL_RE.test(userAll) && !PHONE_RE.test(userAll);
+    const gate = hasContact ? null : cardSkipped ? 'range' : 'ask';
+    const quoteBefore = messages.some((m) => m.role === 'assistant' && /\*\*(합계|Total)/.test(m.content));
+    const cardNote = hasContact && (cardShown || cardSkipped) && !quoteBefore && !leadSent
+      ? [{ type: 'text', text: '[봇에게] 손님이 견적서 받을 곳(연락처)을 남겼어요. calculate_quote로 앞서 받은 조건을 다시 계산해 항목별 견적을 보여 주고, 같은 답에서 submit_lead로 접수하세요(이메일만 받았으면 phone은 비우고 email에).' }] : [];
     // 도구 호출이 나오면 실행하고 다시 물어보는 루프 (최대 4회 — Haiku는 계산 2번 + 접수를 한 답에서 해 3회를 다 쓰는 일이 있었음)
     // 도구는 4번까지, 그래도 끝나지 않으면 마지막 한 번은 도구 없이 지금까지 결과로 답하게 함
     // (운영 시험 11-23: 50명 음식 조합을 계속 계산하다 한도를 다 써서 "잠시 후 다시 시도해 주세요"로 끝남)
@@ -400,9 +443,11 @@ module.exports = async function handler(req, res) {
             { type: 'text', text: SYSTEM_KNOWLEDGE },
             { type: 'text', text: menuText, cache_control: { type: 'ephemeral' } },
             { type: 'text', text: todayText() },   // 날짜는 캐시 지점 뒤에(매일 바뀜)
-            { type: 'text', text: `[봇에게] 접수 뒤 담당자 연락 안내는 "곧 연락드릴게요" 대신 이 문장을 그대로 쓰세요: "${contactWhen()}"` },
+            // 이메일만 받은 손님에게 "몇 분 안에 연락"은 지킬 수 없는 약속 → 메일로 보낸다고만(페르소나 재시험 11-24)
+            { type: 'text', text: emailOnly ? '[봇에게] 이 손님은 전화번호 없이 이메일만 남겼어요. 접수 뒤 안내는 "담당자가 확인해서 견적서를 메일로 보내 드릴게요."로 하고, 몇 분 안에 연락드린다는 시간 약속이나 전화 이야기는 하지 마세요.' : `[봇에게] 접수 뒤 담당자 연락 안내는 "곧 연락드릴게요" 대신 이 문장을 그대로 쓰세요: "${contactWhen()}"` },
             ...leadNote,
             ...regionNote,
+            ...cardNote,
             ...(i === TOOL_ROUNDS ? [{ type: 'text', text: '[봇에게] 이번 답에서는 도구를 더 쓸 수 없어요. 지금까지의 계산 결과와 대화만으로 손님에게 바로 답하세요. 계산하지 않은 새 금액은 말하지 말고, 더 계산이 필요하면 무엇을 정해 주시면 계산해 드린다고만 하세요. 빈 답은 안 됩니다.' }] : []),
           ],
           tools,
@@ -437,6 +482,20 @@ module.exports = async function handler(req, res) {
             if (askedBanner && Array.isArray(out.notes)) out = Object.assign({}, out, { notes: out.notes.filter((n) => !/현수막 위치를 아직 안 물어봤어요/.test(n)) });
             calcs.push(Object.assign({}, out, { _input: cin }));   // 같은 요청의 접수 문자 견적 줄에 씀(전기·현수막 칸에 쓰려고 넣은 조건도 같이)
             meta.tools.push({ name: 'calculate_quote', input: cin, status: out.status, subtotal: out.subtotal, rangeLow: out.rangeLow, rangeHigh: out.rangeHigh, mode: out.mode, region: out.region, items: out.items, costs: out.costs, banners: out.banners, capacity: out.capacity });   // 보드에서 견적서 품목 채울 때 씀
+            // 연락처 전: 모델에게 금액을 넘기지 않음(ask) / 건너뛴 손님: 만 원 단위 대략 범위만(range) — 계산 결과 전체는 기록·접수 문자용으로 남김
+            if (gate && out.status === 'ok') {
+              const rough = roughRange(out), c = calcs[calcs.length - 1];
+              c._gate = gate; c._rough = rough; meta.tools[meta.tools.length - 1].gate = gate;
+              const base = { menu: (out.items || []).map((x) => `${x.name} ${x.servings}인분`).join(', '), region: out.region, trucks: out.trucks, venueNotice: out.venueNotice,
+                notes: (out.notes || []).filter((n) => !/\d{1,3}(,\d{3})+|\d+\s*만/.test(n)) };
+              out = gate === 'ask'
+                ? Object.assign(base, { status: 'contact_first', message: '[봇에게] 계산은 끝났어요. 연락처를 받기 전이라 금액은 말하지 마세요(합계·항목 금액·단가 곱셈 모두). 받은 조건(메뉴·인분·지역·날짜)만 한두 줄로 확인하고 끝내세요. 연락처·contact를 묻거나 필요하다고 말하는 문장은 쓰지 말고(화면이 연락처 카드를 띄움), 아직 접수 전이라 "접수"라는 말도 쓰지 마세요. 손님 언어로 답하세요.' })
+                : Object.assign(base, { status: 'range_only', approx: english ? `about ${rough.map((n) => n.toLocaleString('en-US')).join('~')} KRW (VAT excluded, estimate)` : `대략 ${rough[0] / 10000}만~${rough[1] / 10000}만 원(부가세 별도, 확정 전)`,
+                  message: '[봇에게] 손님이 연락처 카드를 건너뛰었어요. approx 대략 범위만 그대로 보여 주세요. 항목별 금액·단가 곱셈·**합계** 줄은 쓰지 말고, 연락처를 다시 권하지 마세요(화면에 견적서 받기 버튼이 남아 있음). 손님이 연락처를 남기기 싫다고 했어도 대표번호를 붙이지 말고 이 범위로 답하세요. 손님이 항목별 금액·출장비를 물으면 계산이 안 된 것처럼 말하지 말고 "항목별 금액은 [견적서 받기]로 번호나 이메일을 남겨 주시면 바로 보여 드려요"라고 이유를 말하세요. 범위로 나오는 이유나 할인 이야기는 손님이 묻기 전에는 하지 마세요. 손님 언어로 답하세요(영어 손님이면 영어).' });
+            }
+          } else if (tu.name === 'submit_lead' && !String((tu.input || {}).phone || '').trim() && !String((tu.input || {}).email || '').trim()) {
+            out = { status: 'need_contact', message: '[봇에게] 번호나 이메일이 없어 접수하지 않았어요. 연락처를 받은 뒤에 다시 부르세요.' };
+            meta.tools.push({ name: 'submit_lead', input: cleanLead(tu.input), status: 'need_contact' });
           } else if (tu.name === 'submit_lead') {
             const input = cleanLead(tu.input);   // 손님이 넣은 값 정리(문자·시트·보드 기록 모두 이 값)
             if (leadSent) input.isUpdate = true;   // 모델이 isUpdate를 빠뜨려 같은 손님이 '상담 신청'으로 여러 번 들어가던 일 막기
@@ -447,7 +506,7 @@ module.exports = async function handler(req, res) {
             if (fd.note && fd.date !== origDate && typeof input.datetime === 'string') input.datetime = input.datetime.split(origDate).join(fd.date);
             const history = messages.filter((m) => m.role === 'assistant').map((m) => m.content);
             const botTexts = [...history, ...preTexts];
-            out = await handleLead(input, { dateNote: fd.note, botTexts, calcs, history, sessionId });
+            out = await handleLead(input, { dateNote: fd.note, botTexts, calcs, history, sessionId, card: { shown: cardShown || cardSkipped, skipped: cardSkipped } });
             // 날짜가 있으면 그날 직영 여유(보드 '챗봇 상담'에 🟢/🟡/🟠로 표시 + 이후 응대 깊이)
             // 전기 없다는 말이 대화에 있었으면 발전기까지 따져서 판단 (예전엔 빠져서 발전기 모자란 날도 '여유'로 나왔음)
             const allUser = convo.filter((m) => m.role === 'user' && typeof m.content === 'string').map((m) => m.content).join(' ');
@@ -507,8 +566,9 @@ module.exports = async function handler(req, res) {
       {
         const known = new Set();
         const addNums = (s) => amounts(s).forEach((n) => [1, 1.1, 0.1].forEach((k) => known.add(Math.round(n * k))));
-        calcs.forEach((c) => [c.subtotal, c.rangeLow, c.rangeHigh, c.vatIncluded, c.foodValue, c.minimum,
-          ...Object.values(c.costs || {}), ...(c.items || []).map((i) => i.amount)].forEach((n) => {
+        // 연락처 카드 전(ask)에는 이번 계산 금액을 아무것도 인정하지 않고, 건너뛴 손님(range)에는 대략 범위 두 숫자만 — 항목 금액이 새지 않게
+        calcs.forEach((c) => (c._gate === 'ask' ? [] : c._gate === 'range' ? c._rough : [c.subtotal, c.rangeLow, c.rangeHigh, c.vatIncluded, c.foodValue, c.minimum,
+          ...Object.values(c.costs || {}), ...(c.items || []).map((i) => i.amount)]).forEach((n) => {
           if (Number(n) > 0) [1, 1.1, 0.1].forEach((k) => known.add(Math.round(Number(n) * k)));   // 부가세 포함·부가세 액수도 계산 결과로 봄
         }));
         messages.forEach((m) => addNums(typeof m.content === 'string' ? m.content : ''));
@@ -520,7 +580,10 @@ module.exports = async function handler(req, res) {
           dropped = true;
           return keep.length ? keep.join(' ') : null;
         }).filter((l) => l !== null).join('\n').replace(/\n{3,}/g, '\n\n').trim();
-        if (dropped) {
+        if (dropped && calcs.some((c) => c._gate)) {
+          reply = cleaned;   // 카드 문장·대략 범위 안내가 뒤에 붙으므로 "계산해 드릴게요" 문장은 붙이지 않음
+          meta.amountGuard = true;
+        } else if (dropped) {
           reply = (cleaned ? cleaned + '\n\n' : '') + (english ? 'Once the menu and quantity are set, I will calculate the exact amount right away.' : '메뉴와 인분을 정해 주시면 정확한 금액은 계산기로 바로 계산해 드릴게요.');
           meta.amountGuard = true;   // 상담 기록에서 이 장치가 걸린 답을 찾을 수 있게
         }
@@ -528,20 +591,20 @@ module.exports = async function handler(req, res) {
       // 조율·확인이 필요한 답은 접수로 이어지게(전화로 넘기지 않음): 아직 번호를 안 받았고 이번 대화에서 연락처를 물은 적도 없으면 한 줄 붙임
       // (규칙 글만으로는 "인원·지역 알려 주세요"로 끝나는 경우가 있어 서버에서 보장)
       const userTexts = convo.filter((m) => m.role === 'user' && typeof m.content === 'string').map((m) => m.content).join(' ');
-      const hasPhone = /01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/.test(userTexts) || meta.lead;
+      const hasPhone = PHONE_RE.test(userTexts) || EMAIL_RE.test(userTexts) || meta.lead;   // 이메일·회사 유선도 연락처로 봄
       const askedBefore = messages.some((m) => m.role === 'assistant' && /연락처|1877-6901/.test(String(m.content || '')));
       // "담당자 확인" 말이 목록 줄(- · •)에만 있으면 원칙 설명 같은 글이라 붙이지 않음(내부 지침 질문 답 끝에 연락처 요청이 붙던 일)
       const consultLine = reply.split('\n').some((l) => /담당자.{0,20}(확인|조율)/.test(l) && !/^\s*([-·•*]|\d+\.)\s/.test(l));
       // 견적이 한 번이라도 나온 대화에서만 붙임 — "노란색 차 있어요?" 같은 가벼운 문의에 곧바로 연락처를 묻던 일(11-23 실무자 시험)
       const quoteShown = /합계/.test(reply) || messages.some((m) => m.role === 'assistant' && /합계/.test(String(m.content || '')));
-      if (!hasPhone && !askedBefore && consultLine && quoteShown && !/연락처|1877-6901/.test(reply)) {
+      if (!hasPhone && !gate && !askedBefore && consultLine && quoteShown && !/연락처|1877-6901/.test(reply)) {
         reply += '\n\n담당자가 확인해서 연락드릴 수 있게, 성함(회사명)과 연락처를 남겨 주시겠어요?';
       }
       // 연락처 요청은 한 대화에 한 번만: 앞 답에서 이미 물었고 아직 번호가 없으면 이번 답의 연락처 요청 줄을 뺌
       // (매뉴얼에 "한 번만"이 있어도 다시 계산할 때마다 또 묻던 일 — 손님이 진행 의사를 밝힌 답은 예외)
       // 모델이 "연락처만 남겨 주시겠어요?", 목록 줄 "- 연락처(휴대폰 번호)"처럼 모양을 바꿔 다시 묻던 일 → 연락처를 말하는 문장이면 모양과 상관없이 봄
       // "남겨 주시면 접수해 드릴게요"처럼 '연락처' 없이 번호를 다시 조르던 말도 포함(실제 상담 시험 55·70)
-      const CONTACT = /연락처|휴대폰\s?번호|핸드폰\s?번호|전화\s?번호|번호를?\s?남겨|남겨\s?주신\s?번호|남겨\s?주(시면|세요|시겠).{0,12}(접수|연락)/;
+      const CONTACT = /연락처|휴대폰\s?번호|핸드폰\s?번호|전화\s?번호|번호를?\s?남겨|남겨\s?주신\s?번호|남겨\s?주(시면|세요|시겠).{0,12}(접수|연락)|contact (info|information|details|number)|phone number/i;   // 영어 손님 답도(연락처 카드 시험 CC-09)
       const askedContact = messages.some((m) => m.role === 'assistant' && CONTACT.test(String(m.content || '')));
       // 손님 마지막 말(글자). 바깥 lastUser(메시지 객체)와 이름이 같아 상담 기록에 손님 말이 빠지던 일(11-19~11-23) → 이름 분리
       const lastUserText = String((convo.filter((m) => m.role === 'user' && typeof m.content === 'string').pop() || {}).content || '');
@@ -556,7 +619,8 @@ module.exports = async function handler(req, res) {
       const proceedAsk = /(진행|접수|예약|확정)(을|를)?\s?위해|진행하시려면|접수하시려면|진행해\s?드릴\s?수\s?있게/.test(reply);
       // 견적이 아직 없는 가벼운 문의("노란색 차 있어요?")에 모델이 바로 연락처를 묻는 것도 뺌 — 손님이 전화·연락을 원한 경우는 빼지 않음(11-23 실무자 시험)
       const casualAsk = !quoteShown && !/전화|통화|연락\s?(주|달|부탁|해)/.test(lastUserText);
-      if (!hasPhone && (askedContact || casualAsk) && !wantsGo && !proceedAsk) {
+      // 연락처 카드 대화(gate)에서는 모델이 쓴 연락처 요청 문장을 늘 뺌 — 카드가 받고, 건너뛴 손님에게는 다시 조르지 않음
+      if (!hasPhone && (askedContact || casualAsk || gate) && !wantsGo && !proceedAsk) {
         // 연락처를 말하는 목록 줄은 통째로, 일반 줄은 그 문장만 빼고 나머지 문장은 남김
         reply = reply.split('\n').map((l) => {
           if (!CONTACT.test(l)) return l;
@@ -580,6 +644,30 @@ module.exports = async function handler(req, res) {
           return rest || null;
         }).filter((l) => l !== null).join('\n').replace(/\n{3,}/g, '\n\n').trim() || reply;
       }
+      // 연락처 카드: 이번에 금액을 막았으면(ask) 정해진 카드 문장 + 화면에 카드, 건너뛴 손님(range)은 처음 한 번만 안내 문장 + '견적서 받기' 버튼
+      // (카드 문장에 '연락처'가 있어 다음 답부터는 연락처 재요청이 빠짐 — 한 번만 묻기와 같은 장치)
+      let card = null;
+      if (gate && !meta.lead) {
+        const askNow = calcs.some((c) => c._gate === 'ask'), rangeNow = calcs.some((c) => c._gate === 'range');
+        if (gate === 'ask' && (askNow || cardShown)) {
+          // 카드를 이미 본 손님이 답하지 않고 질문을 이어 가면 큰 카드를 다시 띄우지 않고 작은 버튼 두 개만(시험 세션: 카드 반복 31/35)
+          // 단, 손님이 진행하겠다고 하면 큰 카드를 다시 띄우고 모델의 연락처 요청 글은 그대로 둠
+          // (그 글에서 연락처 줄만 빼면 "아래 두 가지만" 뒤에 한 줄만 남음 — 11-23과 같은 모양, CC3-01)
+          const goNow = wantsGo || proceedAsk;
+          card = cardShown && !goNow ? 'mini' : 'ask';
+          // 그 밖에는 카드가 받으니 모델이 쓴 연락처 요청 문장을 뺌(카드와 이중 요청 — FC-FS-08)
+          if (!goNow) reply = reply.split('\n').map((l) => {
+            if (!CONTACT.test(l)) return l;
+            if (/^\s*([-·•*]|\d+\.)\s/.test(l)) return null;
+            return l.split(/(?<=[.?!])\s+/).filter((s) => !CONTACT.test(s)).join(' ').trim() || null;
+          }).filter((l) => l !== null).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+          if (askNow && !cardShown) reply = (reply ? reply + '\n\n' : '') + (english ? CARD_LINE.en : CARD_LINE.ko);
+        } else if (gate === 'range') {
+          card = 'reopen';
+          const rangeLineBefore = messages.some((m) => m.role === 'assistant' && (m.content.includes(RANGE_LINE.ko) || m.content.includes(RANGE_LINE.en)));
+          if (rangeNow && !rangeLineBefore && !/\[견적서 받기\]|\[Get quote\]/.test(reply)) reply = (reply ? reply + '\n\n' : '') + (english ? RANGE_LINE.en : RANGE_LINE.ko);
+        }
+      }
       // 이미 접수한 대화에서 메뉴·수량을 바꿔 다시 계산했는데 모델이 추가 접수를 안 했으면, 담당자 문자에 옛 견적이 남지 않게 서버가 대신 보냄
       // (실제 상담 시험: 120개로 접수 → "140개로 견적 부탁"에 다시 계산만 하고 접수 갱신 없음)
       const lastCalc = calcs.filter((c) => c && c.status === 'ok').pop();
@@ -596,7 +684,8 @@ module.exports = async function handler(req, res) {
         const phones = userTexts.match(/01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/g) || [];
         const input = {
           contactName: '(앞 접수와 같은 손님)',
-          phone: phones.length ? phones[phones.length - 1] : '-',
+          phone: phones.length ? phones[phones.length - 1] : '',
+          email: (userTexts.match(EMAIL_RE) || [])[0] || '',   // 이메일만 준 손님(번호 없음)
           menu: (lastCalc.items || []).map((i) => `${i.name} ${i.servings}`).join(', '),
           region: lastCalc.region || '',
           note: '손님이 접수 뒤 견적을 바꿈(챗봇이 바뀐 견적으로 자동 전달)',
@@ -614,6 +703,9 @@ module.exports = async function handler(req, res) {
       reply = reply.replace(LEAD_MARK_ANY, '').replace(/\n{3,}/g, '\n\n').trim();   // 표시 줄은 서버만 붙임
       // 모델이 쓴 "✅ 접수가 완료됐어요" 같은 줄은 ✅만 빼고 글은 남김 — 접수 표시(✅)는 서버 줄 하나만(운영 시험 11-23: ✅ 줄 두 개)
       reply = reply.replace(/^([ \t]*)✅\s*/gm, '$1');
+      // 모델이 접수 표시 문장을 그대로 썼으면(✅만 빠진 같은 문장) 줄째 뺌 — 서버 줄과 같은 문장이 두 번 보이던 일(FC-FS-05)
+      const markTexts = LEAD_MARKS.map((t) => t.replace(/^✅\s*/, ''));
+      reply = reply.split('\n').filter((l) => !markTexts.includes(l.trim())).join('\n').replace(/\n{3,}/g, '\n\n').trim();
       if (leadKind) reply += '\n\n' + (english ? LEAD_MARK.en : leadKind === 'update' ? LEAD_MARK.koUpdate : LEAD_MARK.ko);
       // 상담 기록은 답을 먼저 보낸 뒤 저장 (손님 대기 시간 줄이기). Vercel이 응답 뒤에도 끝까지 기다리게 waitUntil 사용,
       // 그 기능이 없는 곳(로컬 시험 서버 등)에서는 예전처럼 저장하고 나서 보냄
@@ -628,7 +720,7 @@ module.exports = async function handler(req, res) {
       // 음료 구성을 묻는 답이면 화면 아래(입력칸 위)에 '음료 고르기' 버튼을 띄우게 목록을 같이 보냄
       // (대화가 길면 메뉴는 위, 답은 아래라 손님이 위아래로 오가야 했음)
       const picker = drinkPicker(reply);
-      return res.status(200).json(picker ? { reply, usage, picker } : { reply, usage });
+      return res.status(200).json(Object.assign({ reply, usage }, picker ? { picker } : {}, card ? { card } : {}));
     }
 
     // 도구를 여러 번 부르다 최종 답을 못 받고 끝난 경우: 이번 요청에서 이미 접수했으면 손님이 다시 보내 중복 접수되지 않게 접수됐다고 알림
