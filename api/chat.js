@@ -499,6 +499,7 @@ module.exports = async function handler(req, res) {
           } else if (tu.name === 'submit_lead') {
             const input = cleanLead(tu.input);   // 손님이 넣은 값 정리(문자·시트·보드 기록 모두 이 값)
             if (leadSent) input.isUpdate = true;   // 모델이 isUpdate를 빠뜨려 같은 손님이 '상담 신청'으로 여러 번 들어가던 일 막기
+            else input.isUpdate = false;           // 반대로 첫 접수인데 모델이 isUpdate를 붙이면 '추가 정보'로 들어가 신규가 묻히던 일(11-25 dev 합본 시험)
             leadSent = true;
             const origDate = input.eventDate;
             const fd = fixPastDate(input.eventDate); input.eventDate = fd.date;
