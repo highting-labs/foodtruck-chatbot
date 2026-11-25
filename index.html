@@ -594,9 +594,9 @@ for(let h=0;h<=24;h++){ sH.innerHTML+=`<option value="${h}">${h}시</option>`; e
 sH.value=11; eH.value=14;
 (function(){
   const pv=document.getElementById('timePreview');
-  function upd(){ const d=(+eH.value)-(+sH.value); const over=Math.max(0,d-3); window.updTimePreview=upd;
-    if(d<=0){ pv.textContent='배식 종료 시간을 시작 이후로 골라주세요.'; return; }
-    pv.textContent = `총 배식 ${d}시간 · ` + (over>0 ? `기본 3시간 + 추가 ${over}시간 (+${(over*OVER_HOUR).toLocaleString()}원)` : '기본 3시간 이내 (추가요금 없음)');
+  function upd(){ const d=QuoteCalc.serveHours(sH.value, eH.value); const over=Math.max(0,d-3); window.updTimePreview=upd;
+    if(d<=0){ pv.textContent='배식 시작과 끝 시간을 다르게 골라주세요.'; return; }
+    pv.textContent = `총 배식 ${d}시간${(+eH.value)<(+sH.value)?'(다음 날까지)':''} · ` + (over>0 ? `기본 3시간 + 추가 ${over}시간 (+${(over*OVER_HOUR).toLocaleString()}원)` : '기본 3시간 이내 (추가요금 없음)');
   }
   sH.addEventListener('change',upd); eH.addEventListener('change',upd); upd();
 })();
@@ -670,7 +670,9 @@ document.getElementById('calc').onclick=()=>{
   const elec=document.querySelector('input[name=elec]:checked').value;
   const inquiry=document.getElementById('inquiry').value.trim();
   const startH=+sH.value, endH=+eH.value;
-  const extraHours=Math.max(0,(endH-startH)-BASE_HOURS);
+  const serveH=QuoteCalc.serveHours(startH, endH);   // 끝이 시작보다 이르면 다음 날까지(자정 넘김)
+  const endLabel=(endH<startH?'다음 날 ':'')+endH;
+  const extraHours=Math.max(0,serveH-BASE_HOURS);
   const faces=Object.keys(faceState).filter(k=>faceState[k]);
   const xbannerOn=document.getElementById('xbanner').checked;
   const xbannerQty=parseInt(document.getElementById('xbannerQty').value,10)||1;
@@ -706,13 +708,13 @@ document.getElementById('calc').onclick=()=>{
     '담당자': cname,
     '연락처': cphone,
     '지역': region ? (region + (loc ? (' / ' + loc) : '')) : '미정',
-    '배식': (endH > startH) ? (startH + '시~' + endH + '시') : '미정',
+    '배식': serveH > 0 ? (startH + '시~' + endLabel + '시') : '미정',
     '전기': (elec === '불가능' ? '지원 불가 (자가발전기)' : '지원 가능'),
     '내역': (menus.length ? menus.map(m => m.label + ' ' + m.qty + '인분').join(', ') : '메뉴 미선택') + (offMenu ? (' / 메뉴판외: ' + offMenu) : ''),
     '금액': '유선 상담 필요',
     '문의': inquiry || offMenu || '없음'
   }, { sid: quickSid(), reply: '간편 견적: 유선 상담 요청 ('+why+')',
-      lead: { contactName: cname, phone: cphone, region: region || '', venueStatus: loc || '', serveTime: (endH > startH) ? (String(startH).padStart(2,'0')+':00~'+String(endH).padStart(2,'0')+':00') : '',
+      lead: { contactName: cname, phone: cphone, region: region || '', venueStatus: loc || '', serveTime: serveH > 0 ? (String(startH).padStart(2,'0')+':00~'+String(endH).padStart(2,'0')+':00') : '',
               menu: menus.map(m=>m.label+' '+m.qty+'인분').join(', '), note: [offMenu?('메뉴판외: '+offMenu):'', inquiry].filter(Boolean).join(' / ') } });
     return;
   }
@@ -739,7 +741,7 @@ document.getElementById('calc').onclick=()=>{
   if(monitor) lines+=`<div class="qline"><span>모니터(스탠바이미GO) ×${exMap['모니터']}</span><span>${won(monitor)}</span></div>`;
 
   bannerRows.forEach(b=>{ lines+=`<div class="qline"><span>${b.f} 현수막</span>${b.free?'<span style="color:var(--ok)">서비스</span>':`<span>${won(XBANNER)}</span>`}</div>`; });
-  const info=`<div class="qinfo">배식 ${startH}시~${endH}시</div>`;
+  const info=`<div class="qinfo">배식 ${startH}시~${endLabel}시</div>`;
   const adj=adjusts.length?`<div class="qnote" style="color:var(--tomato-deep)">※ ${adjusts.join(' / ')}</div>`:'';
 
   let badge,valHtml,note;
@@ -777,7 +779,7 @@ document.getElementById('calc').onclick=()=>{
     +'\n담당자/회사: '+cname
     +'\n연락처: '+cphone
     +'\n지역: '+region+(loc?(' / 장소 '+loc):'')
-    +'\n배식시간: '+startH+'시~'+endH+'시'
+    +'\n배식시간: '+startH+'시~'+endLabel+'시'
     +'\n전기: '+(elec==='불가능'?'지원 불가 (자가발전기 사용)':'지원 가능')
     +'\n\n[견적 내역]\n'+btxt.join('\n')
     +(offMenu?('\n\n메뉴판외 요청: '+offMenu):'')
@@ -826,7 +828,7 @@ document.getElementById('calc').onclick=()=>{
     '담당자': cname,
     '연락처': cphone,
     '지역': region + (loc ? (' / ' + loc) : ''),
-    '배식': startH + '시~' + endH + '시',
+    '배식': startH + '시~' + endLabel + '시',
     '전기': (elec === '불가능' ? '지원 불가 (자가발전기)' : '지원 가능'),
     '내역': btxt.join('\n'),
     '금액': amountText + ' (VAT별도)',
@@ -838,7 +840,7 @@ document.getElementById('calc').onclick=()=>{
       items: items.map(m=>({ name: m.label, servings: m.qty, unitPrice: m.price, amount: m.amount })),
       costs: { 출장비: travel, 자가발전기: gen, 추가시간: overFee, X배너: xb, 스티커: stk, 섹터이동: sector, 모니터: monitor, 실내부스: 0, 좌우현수막: R.bannerCost||0 },
       banners: bannerRows,
-      input: { powerAvailable: elec!=='불가능', serviceHours: endH-startH, startTime: String(startH).padStart(2,'0')+':00',
+      input: { powerAvailable: elec!=='불가능', serviceHours: serveH, startTime: String(startH).padStart(2,'0')+':00',
                sideBanners: faces.filter(f=>f==='좌'||f==='우'), venueStatus: loc||'',
                extras: [].concat(xbannerOn?[{name:'X배너',qty:xbannerQty}]:[], stickerOn?[{name:'스티커',qty:stickerBundle}]:[], exMap['섹터이동']?[{name:'섹터이동',qty:exMap['섹터이동']}]:[], exMap['모니터']?[{name:'모니터',qty:exMap['모니터']}]:[]) } } });
  }catch(err){
