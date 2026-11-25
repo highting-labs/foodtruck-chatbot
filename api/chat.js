@@ -324,15 +324,15 @@ function todayText() {
   return `오늘: ${d.toISOString().slice(0, 10)} (${w}) — 한국 시간`;
 }
 
-// 접수 뒤 연락 안내(사무실 답 11-20: 영업시간엔 몇 분 안에, 길어도 10~20분) — 영업시간 평일 10~19시, 공휴일은 모름
+// 접수 뒤 연락 안내(사무실 답 11-20: 영업시간엔 몇 분 안에, 길어도 10~20분) — 영업시간 평일 09~18시(대표 확인 11-25), 공휴일은 모름
 function contactWhen() {
   const d = new Date(Date.now() + 9 * 3600 * 1000);
   const day = d.getUTCDay(), h = d.getUTCHours();
   const weekday = day >= 1 && day <= 5;
-  if (weekday && h >= 10 && h < 19) return '영업시간이라 보통 몇 분 안에(늦어도 20분 안팎) 담당자가 연락드려요.';
-  if (weekday && h < 10) return '오늘 오전 10시 영업 시작 후 담당자가 바로 연락드려요.';
+  if (weekday && h >= 9 && h < 18) return '영업시간이라 보통 몇 분 안에(늦어도 20분 안팎) 담당자가 연락드려요.';
+  if (weekday && h < 9) return '오늘 오전 9시 영업 시작 후 담당자가 바로 연락드려요.';
   const next = day === 5 || day === 6 ? '월요일' : '내일';   // 금 저녁·토 → 월, 일·평일 저녁 → 내일
-  return `지금은 영업시간(평일 10~19시)이 아니라 ${next} 오전에 담당자가 연락드려요.`;
+  return `지금은 영업시간(평일 09~18시)이 아니라 ${next} 오전에 담당자가 연락드려요.`;
 }
 
 // 커피 세트(2·4·7종) 견적에서 음료 구성을 묻는 답 → { kind:'drinks', count, defaults, options }
@@ -565,11 +565,11 @@ module.exports = async function handler(req, res) {
       // (11-23 실무자 시험: "츄러스+회오리감자 100인분이면 약 40만 원 안팎" — 계산기 없이 어림한 틀린 금액)
       {
         const known = new Set();
-        const addNums = (s) => amounts(s).forEach((n) => [1, 1.1, 0.1].forEach((k) => known.add(Math.round(n * k))));
+        const addNums = (s) => amounts(s).forEach((n) => [1, 0.1].forEach((k) => known.add(Math.round(n * k))));
         // 연락처 카드 전(ask)에는 이번 계산 금액을 아무것도 인정하지 않고, 건너뛴 손님(range)에는 대략 범위 두 숫자만 — 항목 금액이 새지 않게
-        calcs.forEach((c) => (c._gate === 'ask' ? [] : c._gate === 'range' ? c._rough : [c.subtotal, c.rangeLow, c.rangeHigh, c.vatIncluded, c.foodValue, c.minimum,
+        calcs.forEach((c) => (c._gate === 'ask' ? [] : c._gate === 'range' ? c._rough : [c.subtotal, c.rangeLow, c.rangeHigh, c.foodValue, c.minimum,
           ...Object.values(c.costs || {}), ...(c.items || []).map((i) => i.amount)]).forEach((n) => {
-          if (Number(n) > 0) [1, 1.1, 0.1].forEach((k) => known.add(Math.round(Number(n) * k)));   // 부가세 포함·부가세 액수도 계산 결과로 봄
+          if (Number(n) > 0) [1, 0.1].forEach((k) => known.add(Math.round(Number(n) * k)));   // 부가세 액수(10%)까지만 — 부가세 포함 금액은 손님에게 말하지 않음(대표 결정 11-25)
         }));
         messages.forEach((m) => addNums(typeof m.content === 'string' ? m.content : ''));
         addNums(menuText); addNums(SYSTEM_KNOWLEDGE);
@@ -584,7 +584,9 @@ module.exports = async function handler(req, res) {
           reply = cleaned;   // 카드 문장·대략 범위 안내가 뒤에 붙으므로 "계산해 드릴게요" 문장은 붙이지 않음
           meta.amountGuard = true;
         } else if (dropped) {
-          reply = (cleaned ? cleaned + '\n\n' : '') + (english ? 'Once the menu and quantity are set, I will calculate the exact amount right away.' : '메뉴와 인분을 정해 주시면 정확한 금액은 계산기로 바로 계산해 드릴게요.');
+          // 부가세 포함 금액을 물은 답에서 빠진 것이면 부가세 안내 문장으로(계산해 드린다는 말은 맞지 않음)
+          const vatAsk = /부가세|vat|tax/i.test(String((messages[messages.length - 1] || {}).content || ''));
+          reply = (cleaned ? cleaned + '\n\n' : '') + (vatAsk ? (english ? 'All amounts exclude VAT. The 10% VAT is listed separately on the written quote.' : '안내 금액은 모두 부가세 별도예요. 부가세 10%는 견적서에 따로 적어 드려요.') : english ? 'Once the menu and quantity are set, I will calculate the exact amount right away.' : '메뉴와 인분을 정해 주시면 정확한 금액은 계산기로 바로 계산해 드릴게요.');
           meta.amountGuard = true;   // 상담 기록에서 이 장치가 걸린 답을 찾을 수 있게
         }
       }
