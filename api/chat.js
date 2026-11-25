@@ -214,6 +214,8 @@ async function handleLead(input, ctx = {}) {
   else if (/견적 확인 필요/.test(quote)) warn.push('⚠ 챗봇이 적은 금액과 계산 결과가 다름 — 견적 확인');
   // 추가 접수에서 견적이 바뀌었으면 이전 → 지금
   const lc = [...calcs].reverse().find((c) => c && c.status === 'ok');
+  // 음식값이 60만 원보다 적어 모자란 금액을 더한 견적 → 담당자가 견적서에 같은 줄로 옮기게(대표 확정 11-25)
+  if (lc && lc.costs && lc.costs.최소주문맞춤 > 0) tags.push(`최소 주문 금액 맞춤 +${won(lc.costs.최소주문맞춤)}원(음식값 ${won(lc.foodValue || 0)}원)`);
   const nowNums = lc ? (lc.mode === 'range' ? [lc.rangeLow, lc.rangeHigh] : [lc.subtotal]) : null;
   const fmt = (ns) => (ns.length > 1 ? '약 ' : '') + ns.map(won).join('~') + '원';
   // 이번 견적이 앞서 보여 준 안 중 하나와 같으면 변경 아님(날짜만 고친 추가 접수 등)

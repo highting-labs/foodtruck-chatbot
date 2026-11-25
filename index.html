@@ -523,7 +523,7 @@ let CAT_LABEL={}, MIN_QTY_BY_CAT={};
 let REGION={};               // 지역 → 출장비 (null = 별도 안내)
 let GEN=0, OVER_HOUR=0, XBANNER=0, STICKER=0, SECTOR=0, MONITOR=0;
 const MIN_QTY=50;   // 메뉴 미선택 상태의 기본 하한
-const {MIN_TOTAL, BASE_HOURS, RANGE_LOW, RANGE_HIGH, VAT}=QuoteCalc.RULES;   // 진행 기준은 lib/quote-calc.js 하나에서
+const {MIN_FOOD, BASE_HOURS, RANGE_LOW, RANGE_HIGH, VAT}=QuoteCalc.RULES;   // 진행 기준은 lib/quote-calc.js 하나에서
 const won = n => Math.round(n).toLocaleString('ko-KR')+'원';
 const minQty = m => Math.max(MIN_QTY_BY_CAT[m.c]||MIN_QTY, m.m||0);
 const feeMan = v => (v%10000===0 ? (v/10000)+'만' : v.toLocaleString('ko-KR')+'원');
@@ -698,7 +698,8 @@ document.getElementById('calc').onclick=()=>{
     sectorQty: exMap['섹터이동']||0, monitorQty: exMap['모니터']||0, offMenu
   }, {gen:GEN, overHour:OVER_HOUR, print:XBANNER, sticker:STICKER, sector:SECTOR, monitor:MONITOR});
 
-  // ----- 견적 가능 여부: 음식값 + 출장비 70만 이상(부가세 별도)만 자동 견적, 그 외는 유선 상담으로 -----
+  // ----- 견적 가능 여부: 음식값 60만 이상(부가세 별도, 출장비 따로)만 자동 견적, 그 외는 유선 상담으로 -----
+  // (챗봇은 모자란 금액을 '최소 주문 금액 맞춤'으로 더해 견적 — 간편 견적에서도 할지는 결정 대기, 11-25 질문지 A-2)
   const eligible = menus.length>0 && R.eligible;
   if(!eligible){
     const cinfo=['담당자/회사: '+cname, '연락처: '+cphone];
@@ -706,7 +707,7 @@ document.getElementById('calc').onclick=()=>{
     if(menus.length) cinfo.push('메뉴: '+menus.map(m=>m.label+' '+m.qty+'인분').join(', ')+' (음식값 '+won(food)+')');
     if(offMenu) cinfo.push('메뉴판외 요청: '+offMenu);
     if(inquiry) cinfo.push('문의사항: '+inquiry);
-    const why = (menus.length>0 && !R.eligible) ? ('최소 주문(음식값+출장비 '+won(MIN_TOTAL)+', 부가세 별도) 미달') : '메뉴 미선택/맞춤 문의';
+    const why = (menus.length>0 && !R.eligible) ? ('최소 주문(음식값 '+won(MIN_FOOD)+', 부가세 별도) 미달') : '메뉴 미선택/맞춤 문의';
     const consultText='[푸드트럭 상담 요청]\n'+cinfo.join('\n')+'\n\n※ '+why+' — 유선 상담 필요';
     const cb=document.getElementById('result'); cb.style.display='block';
     cb.innerHTML='<div class="consult"><b>📞 유선 상담 안내</b>'
