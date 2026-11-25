@@ -523,7 +523,7 @@ let CAT_LABEL={}, MIN_QTY_BY_CAT={};
 let REGION={};               // 지역 → 출장비 (null = 별도 안내)
 let GEN=0, OVER_HOUR=0, XBANNER=0, STICKER=0, SECTOR=0, MONITOR=0;
 const MIN_QTY=50;   // 메뉴 미선택 상태의 기본 하한
-const {MIN_FOOD, BASE_HOURS, RANGE_LOW, RANGE_HIGH, VAT}=QuoteCalc.RULES;   // 진행 기준은 lib/quote-calc.js 하나에서
+const {MIN_TOTAL, BASE_HOURS, RANGE_LOW, RANGE_HIGH, VAT}=QuoteCalc.RULES;   // 진행 기준은 lib/quote-calc.js 하나에서
 const won = n => Math.round(n).toLocaleString('ko-KR')+'원';
 const minQty = m => Math.max(MIN_QTY_BY_CAT[m.c]||MIN_QTY, m.m||0);
 const feeMan = v => (v%10000===0 ? (v/10000)+'만' : v.toLocaleString('ko-KR')+'원');
@@ -687,15 +687,24 @@ document.getElementById('calc').onclick=()=>{
   if(!cname){ alert('담당자명 또는 회사명을 입력해 주세요.'); document.getElementById('cname').focus(); return; }
   if(!/^0\d{8,10}$/.test(digits)){ alert('연락처를 정확히 입력해 주세요. (예: 010-1234-5678)'); cphoneEl.focus(); return; }
 
-  // ----- 견적 가능 여부: 음식값(메뉴 합계) 60만 이상만 자동 견적, 그 외는 유선 상담으로 -----
-  const eligible = menus.length>0 && food>=MIN_FOOD;
+  // ----- 비용 합산 · 상담 사유 · 확정/범위 — 공용 계산(lib/quote-calc.js), 챗봇과 같은 규칙 -----
+  const R=QuoteCalc.calc({
+    items: menus.map(m=>({name:m.label, price:m.price, qty:m.qty, cat:m.cat})),
+    region, travel: REGION, loc, elecOk: elec!=='불가능', startH, endH,
+    sides: {좌:!!faceState['좌'], 우:!!faceState['우']},   // 좌·우: 기준 이상이면 서비스, 아니면 면당 출력물 가격 (기준은 quote-calc.js SIDE_FREE)
+    xbannerQty: xbannerOn?xbannerQty:0, stickerBundles: stickerOn?stickerBundle:0,
+    sectorQty: exMap['섹터이동']||0, monitorQty: exMap['모니터']||0, offMenu
+  }, {gen:GEN, overHour:OVER_HOUR, print:XBANNER, sticker:STICKER, sector:SECTOR, monitor:MONITOR});
+
+  // ----- 견적 가능 여부: 음식값 + 출장비 70만 이상(부가세 별도)만 자동 견적, 그 외는 유선 상담으로 -----
+  const eligible = menus.length>0 && R.eligible;
   if(!eligible){
     const cinfo=['담당자/회사: '+cname, '연락처: '+cphone];
     if(region) cinfo.push('지역: '+region+(loc?(' / 장소 '+loc):''));
     if(menus.length) cinfo.push('메뉴: '+menus.map(m=>m.label+' '+m.qty+'인분').join(', ')+' (음식값 '+won(food)+')');
     if(offMenu) cinfo.push('메뉴판외 요청: '+offMenu);
     if(inquiry) cinfo.push('문의사항: '+inquiry);
-    const why = (menus.length>0 && food<MIN_FOOD) ? ('음식값 최소기준('+won(MIN_FOOD)+') 미달') : '메뉴 미선택/맞춤 문의';
+    const why = (menus.length>0 && !R.eligible) ? ('최소 주문(음식값+출장비 '+won(MIN_TOTAL)+', 부가세 별도) 미달') : '메뉴 미선택/맞춤 문의';
     const consultText='[푸드트럭 상담 요청]\n'+cinfo.join('\n')+'\n\n※ '+why+' — 유선 상담 필요';
     const cb=document.getElementById('result'); cb.style.display='block';
     cb.innerHTML='<div class="consult"><b>📞 유선 상담 안내</b>'
@@ -716,15 +725,6 @@ document.getElementById('calc').onclick=()=>{
               menu: menus.map(m=>m.label+' '+m.qty+'인분').join(', '), note: [offMenu?('메뉴판외: '+offMenu):'', inquiry].filter(Boolean).join(' / ') } });
     return;
   }
-
-  // ----- 비용 합산 · 상담 사유 · 확정/범위 — 공용 계산(lib/quote-calc.js), 챗봇과 같은 규칙 -----
-  const R=QuoteCalc.calc({
-    items: menus.map(m=>({name:m.label, price:m.price, qty:m.qty, cat:m.cat})),
-    region, travel: REGION, loc, elecOk: elec!=='불가능', startH, endH,
-    sides: {좌:!!faceState['좌'], 우:!!faceState['우']},   // 좌·우: 기준 이상이면 서비스, 아니면 면당 출력물 가격 (기준은 quote-calc.js SIDE_FREE)
-    xbannerQty: xbannerOn?xbannerQty:0, stickerBundles: stickerOn?stickerBundle:0,
-    sectorQty: exMap['섹터이동']||0, monitorQty: exMap['모니터']||0, offMenu
-  }, {gen:GEN, overHour:OVER_HOUR, print:XBANNER, sticker:STICKER, sector:SECTOR, monitor:MONITOR});
   const items=R.items, travel=R.travel, gen=R.gen, overFee=R.overFee, xb=R.xb, stk=R.stk, sector=R.sector, monitor=R.monitor;
   const bannerRows=R.bannerRows, subtotal=R.subtotal, reasons=R.reasons, trucks=R.trucks;   // 인분 합계 500 이상이면 2대(출장비 2대분)
   const large=R.large, needConsult=R.needConsult, vat=R.vat, total=R.total, lo=R.lo, hi=R.hi, exact=R.exact;
