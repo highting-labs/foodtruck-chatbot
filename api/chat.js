@@ -94,7 +94,7 @@ const tools = [
 
 // 연락처 카드(금액 직전에 번호·이메일 받기) — 판단은 대화 기록만으로(서버는 상태를 따로 갖지 않음)
 // 카드 문장·건너뛰기 말·제출 말은 화면과 같은 글자(바꾸면 index.html도 같이)
-const CARD_LINE = { ko: '견적서를 받으실 연락처(휴대폰·회사번호 또는 이메일)를 아래에 남겨 주시면 항목별 금액을 바로 보여 드릴게요. 번호 없이 대략 금액만 보셔도 괜찮아요.', en: 'Leave a phone number or email below and I will show the itemized quote right away. You can also just see a rough range without it.' };
+const CARD_LINE = { ko: '견적서를 받으실 연락처(휴대폰·회사번호 또는 이메일)를 아래에 남겨 주시면 항목별 금액을 바로 보여 드릴게요. 번호 없이 대략 금액만 보셔도 괜찮아요.', en: 'Leave a phone number or email below and I will show the itemized quote right away. You can also just see a rough total without it.' };
 const RANGE_LINE = { ko: '항목별 금액과 견적서는 아래 [견적서 받기]로 번호나 이메일을 남겨 주시면 바로 보여 드릴게요.', en: 'For the itemized quote, tap [Get quote] below and leave a phone number or email.' };
 const SKIP_TEXT = /^\s*(번호 없이 대략 금액만 보기|나중에 할게요, 대략 금액만 볼게요|See a rough range without contact|Maybe later, just show me a rough range)\s*$/;
 // 카드 버튼 대신 손님이 직접 "번호 남기기 싫어요, 금액만" 같이 쳐도 건너뛴 것으로 봄(같은 카드를 두 번 띄우지 않게)
@@ -102,12 +102,8 @@ const SKIP_SAID = /번호.{0,8}(싫|안\s?남|못\s?남|말고|부담)|남기기
 const PHONE_RE = /01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}|0[2-6]\d?[-\s.]?\d{3,4}[-\s.]?\d{4}/;   // 휴대폰 + 회사 유선(02·031 등)
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
 const man = (n, up) => (up ? Math.ceil(n / 10000) : Math.floor(n / 10000)) * 10000;   // 만 원 단위로
-// 건너뛴 손님에게 보여 줄 대략 범위: 큰 행사는 계산기 범위, 작은 건(확정가)은 합계~합계×1.1 — 둘 다 만 원 단위
-// (작은 건을 합계×0.9부터 보여 주면 없는 할인 여지로 읽혀서 위로만 둠 — 페르소나 재시험 대표 11-24. 기준은 대표 결정 대기)
-function roughRange(c) {
-  const lo = c.mode === 'range' ? c.rangeLow : c.subtotal, hi = c.mode === 'range' ? c.rangeHigh : c.subtotal * 1.1;
-  return [man(lo, false), man(hi, true)];
-}
+// 건너뛴 손님에게 보여 줄 대략 금액: 합계를 만 원 단위로 올린 한 금액(범위는 쓰지 않음 — 대표 결정 11-26). 항목별 금액은 연락처를 남긴 뒤에
+const roughAmount = (c) => [man(c.subtotal, true)];
 
 // 접수가 실제로 된 답 끝에 서버가 붙이는 정해진 한 줄 — 화면이 답 글을 그대로 다시 보내므로 다음 턴에 이 줄로 '이미 접수됨'을 안다
 // (서버는 이전 턴의 도구 호출을 받지 못함. 모델이 "접수 안 됐다"고 단정하던 일 막기)
@@ -177,7 +173,7 @@ function quoteLine(modelQuote, botTexts, calcs = []) {
   if (calcs.length) {
     const last = calcs[calcs.length - 1];
     if (last.status !== 'ok') return modelQuote || '최소 금액 미달 · 수량 조정 상담 필요';
-    const nums = (c) => (c.mode === 'range' ? [c.rangeLow, c.rangeHigh] : [c.subtotal]);
+    const nums = (c) => [c.subtotal];
     const ok = calcs.filter((c) => c.status === 'ok');
     const pick = [...ok].reverse().find((c) => same(nums(c))) || last;   // 같은 요청에 A·B를 계산했으면 모델이 고른 쪽
     return amountText(nums(pick)) + quoteExtra(modelQuote);
@@ -235,7 +231,7 @@ async function handleLead(input, ctx = {}) {
   const lc = [...calcs].reverse().find((c) => c && c.status === 'ok');
   // 음식값이 60만 원보다 적어 모자란 금액을 더한 견적 → 담당자가 견적서에 같은 줄로 옮기게(대표 확정 11-25)
   if (lc && lc.costs && lc.costs.최소주문맞춤 > 0) tags.push(`최소 주문 금액 맞춤 +${won(lc.costs.최소주문맞춤)}원(음식값 ${won(lc.foodValue || 0)}원)`);
-  const nowNums = lc ? (lc.mode === 'range' ? [lc.rangeLow, lc.rangeHigh] : [lc.subtotal]) : null;
+  const nowNums = lc ? [lc.subtotal] : null;
   const fmt = (ns) => (ns.length > 1 ? '약 ' : '') + ns.map(won).join('~') + '원';
   // 이번 견적이 앞서 보여 준 안 중 하나와 같으면 변경 아님(날짜만 고친 추가 접수 등)
   const sameAsShown = nowNums && lastSums.some((n) => fmt(n) === fmt(nowNums));
@@ -281,11 +277,11 @@ async function handleLead(input, ctx = {}) {
   if (banner) lines.push(`현수막: ${banner}`);
   if (quote) lines.push(`견적: ${quote}`);
   // 연락처 카드로 들어온 접수: 손님이 무엇을 봤고 무엇을 안내받았는지(첫 통화에서 "어디까지 보셨어요?"를 묻지 않게 — 페르소나 시험 11-24)
-  // 숫자로: 건너뛴 손님이 처음 본 대략 범위 → 이번에 본 항목별 금액(부가세 별도). 카드 없이 번호를 준 접수에도 같은 줄(경로마다 문자 모양이 다르지 않게)
+  // 숫자로: 건너뛴 손님이 처음 본 대략 금액 → 이번에 본 항목별 금액(부가세 별도). 카드 없이 번호를 준 접수에도 같은 줄(경로마다 문자 모양이 다르지 않게)
   const cf = ctx.card || {};
   if (!p.isUpdate && !auto) {
-    const roughs = [...(ctx.botTexts || []).join('\n').matchAll(/대략\s*\**\s*(\d[\d,]*)만\s*~\s*(\d[\d,]*)만/g)];
-    const rough = roughs.length ? `연락처 전 대략 ${roughs[roughs.length - 1][1]}만~${roughs[roughs.length - 1][2]}만 원 → ` : '';
+    const roughs = [...(ctx.botTexts || []).join('\n').matchAll(/대략\s*\**\s*(\d[\d,]*)만/g)];
+    const rough = roughs.length ? `연락처 전 대략 ${roughs[roughs.length - 1][1]}만 원 → ` : '';
     const seen = nowNums ? `항목별 ${fmt(nowNums)}` : lastSum ? `항목별 ${fmt(lastSum)}` : '아직 금액 안 봄';
     lines.push(`손님이 본 금액: ${rough}${seen} (부가세 별도)`);
     lines.push(`안내한 것: ${!p.phone && p.email ? '견적서는 메일로 보내 드린다고 함(전화번호 없음)' : '담당자가 견적서 보내고 확인 연락'}${cf.shown ? ' · 연락처 카드로 받음' : ''} (할인·차량 확보는 약속 안 함)`);
@@ -409,7 +405,7 @@ module.exports = async function handler(req, res) {
       .matchAll(/(?:출장비|Travel fee)\s?\(([^),]+)/gi)].map((m) => m[1].trim());
     const knownRegion = regionHits.length ? regionHits[regionHits.length - 1] : '';
     const regionNote = knownRegion ? [{ type: 'text', text: `[봇에게] 이 대화에서 이미 받은 행사 지역: ${knownRegion} — 메뉴·인분을 바꿔도 지역은 다시 묻지 말고 이 지역으로 계산하세요(손님이 지역을 바꾸면 그때만 새 지역).` }] : [];
-    // 연락처 카드: 연락처(번호·이메일)를 받기 전에는 금액을 주지 않음(ask), 손님이 카드를 건너뛰었으면 대략 범위만(range)
+    // 연락처 카드: 연락처(번호·이메일)를 받기 전에는 금액을 주지 않음(ask), 손님이 카드를 건너뛰었으면 대략 금액만(range)
     const userAll = messages.filter((m) => m.role === 'user').map((m) => m.content).join(' ');
     const isCard = (m) => m.role === 'assistant' && (m.content.includes(CARD_LINE.ko) || m.content.includes(CARD_LINE.en));
     const cardShown = messages.some(isCard);
@@ -481,17 +477,17 @@ module.exports = async function handler(req, res) {
             if (english && out.venueNoticeEn) out = Object.assign({}, out, { venueNotice: out.venueNoticeEn });
             if (askedBanner && Array.isArray(out.notes)) out = Object.assign({}, out, { notes: out.notes.filter((n) => !/현수막 위치를 아직 안 물어봤어요/.test(n)) });
             calcs.push(Object.assign({}, out, { _input: cin }));   // 같은 요청의 접수 문자 견적 줄에 씀(전기·현수막 칸에 쓰려고 넣은 조건도 같이)
-            meta.tools.push({ name: 'calculate_quote', input: cin, status: out.status, subtotal: out.subtotal, rangeLow: out.rangeLow, rangeHigh: out.rangeHigh, mode: out.mode, region: out.region, items: out.items, costs: out.costs, banners: out.banners, capacity: out.capacity });   // 보드에서 견적서 품목 채울 때 씀
-            // 연락처 전: 모델에게 금액을 넘기지 않음(ask) / 건너뛴 손님: 만 원 단위 대략 범위만(range) — 계산 결과 전체는 기록·접수 문자용으로 남김
+            meta.tools.push({ name: 'calculate_quote', input: cin, status: out.status, subtotal: out.subtotal, mode: out.mode, region: out.region, items: out.items, costs: out.costs, banners: out.banners, capacity: out.capacity });   // 보드에서 견적서 품목 채울 때 씀
+            // 연락처 전: 모델에게 금액을 넘기지 않음(ask) / 건너뛴 손님: 만 원 단위 대략 금액만(range) — 계산 결과 전체는 기록·접수 문자용으로 남김
             if (gate && out.status === 'ok') {
-              const rough = roughRange(out), c = calcs[calcs.length - 1];
+              const rough = roughAmount(out), c = calcs[calcs.length - 1];
               c._gate = gate; c._rough = rough; meta.tools[meta.tools.length - 1].gate = gate;
               const base = { menu: (out.items || []).map((x) => `${x.name} ${x.servings}인분`).join(', '), region: out.region, trucks: out.trucks, venueNotice: out.venueNotice,
                 notes: (out.notes || []).filter((n) => !/\d{1,3}(,\d{3})+|\d+\s*만/.test(n)) };
               out = gate === 'ask'
                 ? Object.assign(base, { status: 'contact_first', message: '[봇에게] 계산은 끝났어요. 연락처를 받기 전이라 금액은 말하지 마세요(합계·항목 금액·단가 곱셈 모두). 받은 조건(메뉴·인분·지역·날짜)만 한두 줄로 확인하고 끝내세요. 연락처·contact를 묻거나 필요하다고 말하는 문장은 쓰지 말고(화면이 연락처 카드를 띄움), 아직 접수 전이라 "접수"라는 말도 쓰지 마세요. 손님 언어로 답하세요.' })
-                : Object.assign(base, { status: 'range_only', approx: english ? `about ${rough.map((n) => n.toLocaleString('en-US')).join('~')} KRW (VAT excluded, estimate)` : `대략 ${rough[0] / 10000}만~${rough[1] / 10000}만 원(부가세 별도, 확정 전)`,
-                  message: '[봇에게] 손님이 연락처 카드를 건너뛰었어요. approx 대략 범위만 그대로 보여 주세요. 항목별 금액·단가 곱셈·**합계** 줄은 쓰지 말고, 연락처를 다시 권하지 마세요(화면에 견적서 받기 버튼이 남아 있음). 손님이 연락처를 남기기 싫다고 했어도 대표번호를 붙이지 말고 이 범위로 답하세요. 손님이 항목별 금액·출장비를 물으면 계산이 안 된 것처럼 말하지 말고 "항목별 금액은 [견적서 받기]로 번호나 이메일을 남겨 주시면 바로 보여 드려요"라고 이유를 말하세요. 범위로 나오는 이유나 할인 이야기는 손님이 묻기 전에는 하지 마세요. 손님 언어로 답하세요(영어 손님이면 영어).' });
+                : Object.assign(base, { status: 'range_only', approx: english ? `about ${rough[0].toLocaleString('en-US')} KRW (VAT excluded, estimate)` : `대략 ${rough[0] / 10000}만 원(부가세 별도, 확정 전)`,
+                  message: '[봇에게] 손님이 연락처 카드를 건너뛰었어요. approx 대략 금액만 그대로 보여 주세요(범위로 바꾸지 말 것). 항목별 금액·단가 곱셈·**합계** 줄은 쓰지 말고, 연락처를 다시 권하지 마세요(화면에 견적서 받기 버튼이 남아 있음). 손님이 연락처를 남기기 싫다고 했어도 대표번호를 붙이지 말고 이 금액으로 답하세요. 손님이 항목별 금액·출장비를 물으면 계산이 안 된 것처럼 말하지 말고 "항목별 금액은 [견적서 받기]로 번호나 이메일을 남겨 주시면 바로 보여 드려요"라고 이유를 말하세요. 할인 이야기는 손님이 묻기 전에는 하지 마세요. 손님 언어로 답하세요(영어 손님이면 영어).' });
             }
           } else if (tu.name === 'submit_lead' && !String((tu.input || {}).phone || '').trim() && !String((tu.input || {}).email || '').trim()) {
             out = { status: 'need_contact', message: '[봇에게] 번호나 이메일이 없어 접수하지 않았어요. 연락처를 받은 뒤에 다시 부르세요.' };
@@ -567,8 +563,8 @@ module.exports = async function handler(req, res) {
       {
         const known = new Set();
         const addNums = (s) => amounts(s).forEach((n) => [1, 0.1].forEach((k) => known.add(Math.round(n * k))));
-        // 연락처 카드 전(ask)에는 이번 계산 금액을 아무것도 인정하지 않고, 건너뛴 손님(range)에는 대략 범위 두 숫자만 — 항목 금액이 새지 않게
-        calcs.forEach((c) => (c._gate === 'ask' ? [] : c._gate === 'range' ? c._rough : [c.subtotal, c.rangeLow, c.rangeHigh, c.foodValue, c.minimum,
+        // 연락처 카드 전(ask)에는 이번 계산 금액을 아무것도 인정하지 않고, 건너뛴 손님(range)에는 대략 금액 한 숫자만 — 항목 금액이 새지 않게
+        calcs.forEach((c) => (c._gate === 'ask' ? [] : c._gate === 'range' ? c._rough : [c.subtotal, c.foodValue, c.minimum,
           ...Object.values(c.costs || {}), ...(c.items || []).map((i) => i.amount)]).forEach((n) => {
           if (Number(n) > 0) [1, 0.1].forEach((k) => known.add(Math.round(Number(n) * k)));   // 부가세 액수(10%)까지만 — 부가세 포함 금액은 손님에게 말하지 않음(대표 결정 11-25)
         }));
@@ -582,7 +578,7 @@ module.exports = async function handler(req, res) {
           return keep.length ? keep.join(' ') : null;
         }).filter((l) => l !== null).join('\n').replace(/\n{3,}/g, '\n\n').trim();
         if (dropped && calcs.some((c) => c._gate)) {
-          reply = cleaned;   // 카드 문장·대략 범위 안내가 뒤에 붙으므로 "계산해 드릴게요" 문장은 붙이지 않음
+          reply = cleaned;   // 카드 문장·대략 금액 안내가 뒤에 붙으므로 "계산해 드릴게요" 문장은 붙이지 않음
           meta.amountGuard = true;
         } else if (dropped) {
           // 부가세 포함 금액을 물은 답에서 빠진 것이면 부가세 안내 문장으로(계산해 드린다는 말은 맞지 않음)

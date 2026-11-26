@@ -538,7 +538,7 @@ let CAT_LABEL={}, MIN_QTY_BY_CAT={};
 let REGION={};               // 지역 → 출장비 (null = 별도 안내)
 let GEN=0, OVER_HOUR=0, XBANNER=0, STICKER=0, SECTOR=0, MONITOR=0;
 const MIN_QTY=50;   // 메뉴 미선택 상태의 기본 하한
-const {MIN_FOOD, BASE_HOURS, RANGE_LOW, RANGE_HIGH, VAT}=QuoteCalc.RULES;   // 진행 기준은 lib/quote-calc.js 하나에서
+const {MIN_FOOD, BASE_HOURS, RANGE_HIGH, VAT}=QuoteCalc.RULES;   // 진행 기준은 lib/quote-calc.js 하나에서
 const won = n => Math.round(n).toLocaleString('ko-KR')+'원';
 const minQty = m => Math.max(MIN_QTY_BY_CAT[m.c]||MIN_QTY, m.m||0);
 const feeMan = v => (v%10000===0 ? (v/10000)+'만' : v.toLocaleString('ko-KR')+'원');
@@ -745,7 +745,7 @@ document.getElementById('calc').onclick=()=>{
   }
   const items=R.items, travel=R.travel, gen=R.gen, overFee=R.overFee, xb=R.xb, stk=R.stk, sector=R.sector, monitor=R.monitor;
   const bannerRows=R.bannerRows, subtotal=R.subtotal, reasons=R.reasons, trucks=R.trucks;   // 인분 합계 500 이상이면 2대(출장비 2대분)
-  const large=R.large, needConsult=R.needConsult, vat=R.vat, total=R.total, lo=R.lo, hi=R.hi, exact=R.exact;
+  const large=R.large, needConsult=R.needConsult, vat=R.vat, total=R.total;
 
   let lines=items.map(m=>`<div class="qline"><span>${m.label} ${won(m.price)} × ${m.qty}인분</span><span>${won(m.amount)}</span></div>`).join('');   // 개당 가격도 함께(11-23 실무자 의견)
   if(region) lines+=`<div class="qline"><span>출장비 (${region}) <span style="color:var(--muted);font-size:13px">· 차량 ${trucks}대 기준</span></span><span>${(REGION[region]==null)?'별도 안내':won(travel)}</span></div>`;   // 제주·섬은 출장비 별도 안내(0원 아님)
@@ -760,25 +760,16 @@ document.getElementById('calc').onclick=()=>{
   const info=`<div class="qinfo">배식 ${startH}시~${endLabel}시</div>`;
   const adj=adjusts.length?`<div class="qnote" style="color:var(--tomato-deep)">※ ${adjusts.join(' / ')}</div>`:'';
 
-  let badge,valHtml,note;
-  if(exact){
-    badge=`<span class="badge fix">예상 견적</span>`;
-    valHtml=`<span class="val">${won(subtotal)}</span>`;
-    note=`부가세 별도 (세금계산서 발행 가능). 확정 전 예상 금액이에요. · 기본 3시간·배식 1시간 전 셋팅 포함.`;
-  }else{
-    badge=`<span class="badge range">대략 예상 금액</span>`;
-    valHtml=`<span class="val">${won(lo)}~${won(hi)}</span>`;
-    // 사무실 답(11-20): 500인분 이상만 1인분 300~500원 할인 안내, 그 밖의 할인·협의는 먼저 말하지 않음(챗봇과 같게)
-    note = R.bulk
-      ? `${QuoteCalc.RULES.BULK_SERVINGS}인분 이상이라 1인분 ${QuoteCalc.RULES.BULK_OFF_MIN}~${QuoteCalc.RULES.BULK_OFF_MAX}원 할인이 들어갈 수 있어요(아래쪽 금액에 반영). 확정 전 예상 금액이에요. (부가세 별도)`
-      : '담당자가 조건을 확인한 뒤 확정해 드려요. 확정 전 예상 금액이에요. (부가세 별도)';
-  }
+  // 대표 결정(11-26): 범위 없이 정가 한 금액만. 200만 원 이상이면 담당자 재량 할인 한 줄(챗봇과 같은 문장)
+  const badge=`<span class="badge fix">예상 견적</span>`;
+  const valHtml=`<span class="val">${won(subtotal)}</span>`;
+  const note=`부가세 별도 (세금계산서 발행 가능). 확정 전 예상 금액이에요. · 기본 3시간·배식 1시간 전 셋팅 포함.`+(needConsult?' 담당자가 조건을 확인한 뒤 확정해 드려요.':'')+(R.discountable?' '+QuoteCalc.DISCOUNT_NOTICE:'');
 
   const rHtml = reasons.map(r=>'<div>· '+r+'</div>').join('');
   const consult = needConsult ? '<div class="consult"><b>더 정확한 상담을 위해 담당자가 곧 연락드릴 예정입니다.</b>'+rHtml+'</div>' : '';
   const echo = `<div class="echo">📞 ${cname} · ${cphone}<span>위 번호가 정확한지 한 번만 더 확인해 주세요</span></div>`;
 
-  const amountText = exact ? won(subtotal) : (won(lo)+'~'+won(hi));
+  const amountText = won(subtotal);
   // ----- 카톡/문자 알림: 견적 안내 전체 내역을 텍스트로 -----
   const btxt=[];
   items.forEach(m=>btxt.push('- '+m.label+' '+m.qty+'인분: '+won(m.amount)));
@@ -852,7 +843,7 @@ document.getElementById('calc').onclick=()=>{
   }, { sid: qSid, reply: '간편 견적 화면에서 안내한 금액: '+amountText+' (VAT 별도)',
     lead: { contactName: cname, phone: cphone, region: region || '', venueStatus: loc || '', serveTime: String(startH).padStart(2,'0')+':00~'+String(endH).padStart(2,'0')+':00',
             menu: items.map(m=>m.label+' '+m.qty+'인분').join(', '), quote: amountText+' (VAT 별도)', note: [offMenu?('메뉴판외: '+offMenu):'', inquiry].filter(Boolean).join(' / ') },
-    quote: { mode: exact?'fixed':'range', subtotal, rangeLow: lo, rangeHigh: hi, region,
+    quote: { mode: 'fixed', subtotal, region,
       items: items.map(m=>({ name: m.label, servings: m.qty, unitPrice: m.price, amount: m.amount })),
       costs: { 출장비: travel, 자가발전기: gen, 추가시간: overFee, X배너: xb, 스티커: stk, 섹터이동: sector, 모니터: monitor, 실내부스: 0, 좌우현수막: R.bannerCost||0 },
       banners: bannerRows,
