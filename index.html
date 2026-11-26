@@ -282,6 +282,21 @@ select:focus,input:focus,.body textarea:focus{outline:none;border-color:var(--bl
 .dpick .da button.go:disabled{opacity:.45;cursor:default}
 .composer{flex:0 0 auto;padding:8px 14px calc(10px + env(safe-area-inset-bottom));background:var(--white);border-top:1px solid var(--line-soft);display:flex;align-items:flex-end;gap:8px}
 .chips:has(.dpick) + .composer{border-top:0}
+/* 연락처 카드(금액 직전에 견적서 받을 곳 받기) — 음료 고르기와 같은 자리·모양 */
+.chips:has(.cpick){padding:0;overflow:visible}
+.chips:has(.cpick) + .composer{border-top:0}
+.cpick{flex:1 1 100%;min-width:0;background:var(--white);border-top:1px solid var(--line);padding:12px 14px 6px;display:flex;flex-direction:column;gap:8px}
+.cpick .ch{font-size:14.5px;font-weight:800;color:var(--navy)}
+.cpick .ct{display:flex;gap:6px}
+.cpick .ct button{flex:1;min-height:40px;border:1px solid var(--fline);background:var(--white);color:var(--ink-2);border-radius:10px;font-size:13.5px;font-weight:700;cursor:pointer}
+.cpick .ct button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft);color:var(--blue)}
+.cpick input{width:100%;border:1px solid var(--fline);border-radius:10px;padding:10px 12px;font-family:inherit;font-size:16px;background:var(--white);color:var(--ink)}
+.cpick .ce{font-size:12.5px;color:var(--bad);min-height:0}
+.cpick .ce:empty{display:none}
+.cpick .go{min-height:46px;border:0;border-radius:12px;background:var(--blue);color:#fff;font-size:15px;font-weight:800;cursor:pointer}
+.cpick .pv{font-size:12px;color:var(--ink-3);line-height:1.5}
+.cpick .sk{min-height:44px;border:1px solid var(--fline);border-radius:12px;background:var(--white);color:var(--ink-2);font-size:14px;font-weight:700;cursor:pointer}
+@media (min-width:960px){ .cpick{padding-inline:28px} }
 .composer .field{flex:1;display:flex;align-items:center;min-height:48px;background:var(--bot);border:1px solid transparent;border-radius:24px;padding:2px 6px 2px 16px;transition:border-color 150ms ease}
 .composer .field:focus-within{border-color:var(--blue)}
 .composer textarea{flex:1;resize:none;border:none;background:transparent;padding:10px 0;font-family:inherit;font-size:16px;color:var(--ink);line-height:1.5;max-height:120px;outline:none}
@@ -523,7 +538,7 @@ let CAT_LABEL={}, MIN_QTY_BY_CAT={};
 let REGION={};               // 지역 → 출장비 (null = 별도 안내)
 let GEN=0, OVER_HOUR=0, XBANNER=0, STICKER=0, SECTOR=0, MONITOR=0;
 const MIN_QTY=50;   // 메뉴 미선택 상태의 기본 하한
-const {MIN_FOOD, BASE_HOURS, RANGE_LOW, RANGE_HIGH, VAT}=QuoteCalc.RULES;   // 진행 기준은 lib/quote-calc.js 하나에서
+const {MIN_FOOD, BASE_HOURS, RANGE_HIGH, VAT}=QuoteCalc.RULES;   // 진행 기준은 lib/quote-calc.js 하나에서
 const won = n => Math.round(n).toLocaleString('ko-KR')+'원';
 const minQty = m => Math.max(MIN_QTY_BY_CAT[m.c]||MIN_QTY, m.m||0);
 const feeMan = v => (v%10000===0 ? (v/10000)+'만' : v.toLocaleString('ko-KR')+'원');
@@ -594,9 +609,9 @@ for(let h=0;h<=24;h++){ sH.innerHTML+=`<option value="${h}">${h}시</option>`; e
 sH.value=11; eH.value=14;
 (function(){
   const pv=document.getElementById('timePreview');
-  function upd(){ const d=(+eH.value)-(+sH.value); const over=Math.max(0,d-3); window.updTimePreview=upd;
-    if(d<=0){ pv.textContent='배식 종료 시간을 시작 이후로 골라주세요.'; return; }
-    pv.textContent = `총 배식 ${d}시간 · ` + (over>0 ? `기본 3시간 + 추가 ${over}시간 (+${(over*OVER_HOUR).toLocaleString()}원)` : '기본 3시간 이내 (추가요금 없음)');
+  function upd(){ const d=QuoteCalc.serveHours(sH.value, eH.value); const over=Math.max(0,d-3); window.updTimePreview=upd;
+    if(d<=0){ pv.textContent='배식 시작과 끝 시간을 다르게 골라주세요.'; return; }
+    pv.textContent = `총 배식 ${d}시간${(+eH.value)<(+sH.value)?'(다음 날까지)':''} · ` + (over>0 ? `기본 3시간 + 추가 ${over}시간 (+${(over*OVER_HOUR).toLocaleString()}원)` : '기본 3시간 이내 (추가요금 없음)');
   }
   sH.addEventListener('change',upd); eH.addEventListener('change',upd); upd();
 })();
@@ -670,7 +685,9 @@ document.getElementById('calc').onclick=()=>{
   const elec=document.querySelector('input[name=elec]:checked').value;
   const inquiry=document.getElementById('inquiry').value.trim();
   const startH=+sH.value, endH=+eH.value;
-  const extraHours=Math.max(0,(endH-startH)-BASE_HOURS);
+  const serveH=QuoteCalc.serveHours(startH, endH);   // 끝이 시작보다 이르면 다음 날까지(자정 넘김)
+  const endLabel=(endH<startH?'다음 날 ':'')+endH;
+  const extraHours=Math.max(0,serveH-BASE_HOURS);
   const faces=Object.keys(faceState).filter(k=>faceState[k]);
   const xbannerOn=document.getElementById('xbanner').checked;
   const xbannerQty=parseInt(document.getElementById('xbannerQty').value,10)||1;
@@ -687,15 +704,25 @@ document.getElementById('calc').onclick=()=>{
   if(!cname){ alert('담당자명 또는 회사명을 입력해 주세요.'); document.getElementById('cname').focus(); return; }
   if(!/^0\d{8,10}$/.test(digits)){ alert('연락처를 정확히 입력해 주세요. (예: 010-1234-5678)'); cphoneEl.focus(); return; }
 
-  // ----- 견적 가능 여부: 음식값(메뉴 합계) 60만 이상만 자동 견적, 그 외는 유선 상담으로 -----
-  const eligible = menus.length>0 && food>=MIN_FOOD;
+  // ----- 비용 합산 · 상담 사유 · 확정/범위 — 공용 계산(lib/quote-calc.js), 챗봇과 같은 규칙 -----
+  const R=QuoteCalc.calc({
+    items: menus.map(m=>({name:m.label, price:m.price, qty:m.qty, cat:m.cat})),
+    region, travel: REGION, loc, elecOk: elec!=='불가능', startH, endH,
+    sides: {좌:!!faceState['좌'], 우:!!faceState['우']},   // 좌·우: 기준 이상이면 서비스, 아니면 면당 출력물 가격 (기준은 quote-calc.js SIDE_FREE)
+    xbannerQty: xbannerOn?xbannerQty:0, stickerBundles: stickerOn?stickerBundle:0,
+    sectorQty: exMap['섹터이동']||0, monitorQty: exMap['모니터']||0, offMenu
+  }, {gen:GEN, overHour:OVER_HOUR, print:XBANNER, sticker:STICKER, sector:SECTOR, monitor:MONITOR});
+
+  // ----- 견적 가능 여부: 음식값 60만 이상(부가세 별도, 출장비 따로)만 자동 견적, 그 외는 유선 상담으로 -----
+  // (챗봇은 모자란 금액을 '최소 주문 금액 맞춤'으로 더해 견적 — 간편 견적에서도 할지는 결정 대기, 11-25 질문지 A-2)
+  const eligible = menus.length>0 && R.eligible;
   if(!eligible){
     const cinfo=['담당자/회사: '+cname, '연락처: '+cphone];
     if(region) cinfo.push('지역: '+region+(loc?(' / 장소 '+loc):''));
     if(menus.length) cinfo.push('메뉴: '+menus.map(m=>m.label+' '+m.qty+'인분').join(', ')+' (음식값 '+won(food)+')');
     if(offMenu) cinfo.push('메뉴판외 요청: '+offMenu);
     if(inquiry) cinfo.push('문의사항: '+inquiry);
-    const why = (menus.length>0 && food<MIN_FOOD) ? ('음식값 최소기준('+won(MIN_FOOD)+') 미달') : '메뉴 미선택/맞춤 문의';
+    const why = (menus.length>0 && !R.eligible) ? ('최소 주문(음식값 '+won(MIN_FOOD)+', 부가세 별도) 미달') : '메뉴 미선택/맞춤 문의';
     const consultText='[푸드트럭 상담 요청]\n'+cinfo.join('\n')+'\n\n※ '+why+' — 유선 상담 필요';
     const cb=document.getElementById('result'); cb.style.display='block';
     cb.innerHTML='<div class="consult"><b>📞 유선 상담 안내</b>'
@@ -706,28 +733,19 @@ document.getElementById('calc').onclick=()=>{
     '담당자': cname,
     '연락처': cphone,
     '지역': region ? (region + (loc ? (' / ' + loc) : '')) : '미정',
-    '배식': (endH > startH) ? (startH + '시~' + endH + '시') : '미정',
+    '배식': serveH > 0 ? (startH + '시~' + endLabel + '시') : '미정',
     '전기': (elec === '불가능' ? '지원 불가 (자가발전기)' : '지원 가능'),
     '내역': (menus.length ? menus.map(m => m.label + ' ' + m.qty + '인분').join(', ') : '메뉴 미선택') + (offMenu ? (' / 메뉴판외: ' + offMenu) : ''),
     '금액': '유선 상담 필요',
     '문의': inquiry || offMenu || '없음'
   }, { sid: quickSid(), reply: '간편 견적: 유선 상담 요청 ('+why+')',
-      lead: { contactName: cname, phone: cphone, region: region || '', venueStatus: loc || '', serveTime: (endH > startH) ? (String(startH).padStart(2,'0')+':00~'+String(endH).padStart(2,'0')+':00') : '',
+      lead: { contactName: cname, phone: cphone, region: region || '', venueStatus: loc || '', serveTime: serveH > 0 ? (String(startH).padStart(2,'0')+':00~'+String(endH).padStart(2,'0')+':00') : '',
               menu: menus.map(m=>m.label+' '+m.qty+'인분').join(', '), note: [offMenu?('메뉴판외: '+offMenu):'', inquiry].filter(Boolean).join(' / ') } });
     return;
   }
-
-  // ----- 비용 합산 · 상담 사유 · 확정/범위 — 공용 계산(lib/quote-calc.js), 챗봇과 같은 규칙 -----
-  const R=QuoteCalc.calc({
-    items: menus.map(m=>({name:m.label, price:m.price, qty:m.qty, cat:m.cat})),
-    region, travel: REGION, loc, elecOk: elec!=='불가능', startH, endH,
-    sides: {좌:!!faceState['좌'], 우:!!faceState['우']},   // 좌·우: 기준 이상이면 서비스, 아니면 면당 출력물 가격 (기준은 quote-calc.js SIDE_FREE)
-    xbannerQty: xbannerOn?xbannerQty:0, stickerBundles: stickerOn?stickerBundle:0,
-    sectorQty: exMap['섹터이동']||0, monitorQty: exMap['모니터']||0, offMenu
-  }, {gen:GEN, overHour:OVER_HOUR, print:XBANNER, sticker:STICKER, sector:SECTOR, monitor:MONITOR});
   const items=R.items, travel=R.travel, gen=R.gen, overFee=R.overFee, xb=R.xb, stk=R.stk, sector=R.sector, monitor=R.monitor;
   const bannerRows=R.bannerRows, subtotal=R.subtotal, reasons=R.reasons, trucks=R.trucks;   // 인분 합계 500 이상이면 2대(출장비 2대분)
-  const large=R.large, needConsult=R.needConsult, vat=R.vat, total=R.total, lo=R.lo, hi=R.hi, exact=R.exact;
+  const large=R.large, needConsult=R.needConsult, vat=R.vat, total=R.total;
 
   let lines=items.map(m=>`<div class="qline"><span>${m.label} ${won(m.price)} × ${m.qty}인분</span><span>${won(m.amount)}</span></div>`).join('');   // 개당 가격도 함께(11-23 실무자 의견)
   if(region) lines+=`<div class="qline"><span>출장비 (${region}) <span style="color:var(--muted);font-size:13px">· 차량 ${trucks}대 기준</span></span><span>${(REGION[region]==null)?'별도 안내':won(travel)}</span></div>`;   // 제주·섬은 출장비 별도 안내(0원 아님)
@@ -739,28 +757,19 @@ document.getElementById('calc').onclick=()=>{
   if(monitor) lines+=`<div class="qline"><span>모니터(스탠바이미GO) ×${exMap['모니터']}</span><span>${won(monitor)}</span></div>`;
 
   bannerRows.forEach(b=>{ lines+=`<div class="qline"><span>${b.f} 현수막</span>${b.free?'<span style="color:var(--ok)">서비스</span>':`<span>${won(XBANNER)}</span>`}</div>`; });
-  const info=`<div class="qinfo">배식 ${startH}시~${endH}시</div>`;
+  const info=`<div class="qinfo">배식 ${startH}시~${endLabel}시</div>`;
   const adj=adjusts.length?`<div class="qnote" style="color:var(--tomato-deep)">※ ${adjusts.join(' / ')}</div>`:'';
 
-  let badge,valHtml,note;
-  if(exact){
-    badge=`<span class="badge fix">예상 견적</span>`;
-    valHtml=`<span class="val">${won(subtotal)}</span>`;
-    note=`부가세 별도 (세금계산서 발행 가능). 확정 전 예상 금액이에요. · 기본 3시간·배식 1시간 전 셋팅 포함.`;
-  }else{
-    badge=`<span class="badge range">대략 예상 금액</span>`;
-    valHtml=`<span class="val">${won(lo)}~${won(hi)}</span>`;
-    // 사무실 답(11-20): 500인분 이상만 1인분 300~500원 할인 안내, 그 밖의 할인·협의는 먼저 말하지 않음(챗봇과 같게)
-    note = R.bulk
-      ? `${QuoteCalc.RULES.BULK_SERVINGS}인분 이상이라 1인분 ${QuoteCalc.RULES.BULK_OFF_MIN}~${QuoteCalc.RULES.BULK_OFF_MAX}원 할인이 들어갈 수 있어요(아래쪽 금액에 반영). 확정 전 예상 금액이에요. (부가세 별도)`
-      : '담당자가 조건을 확인한 뒤 확정해 드려요. 확정 전 예상 금액이에요. (부가세 별도)';
-  }
+  // 대표 결정(11-26): 범위 없이 정가 한 금액만. 200만 원 이상이면 담당자 재량 할인 한 줄(챗봇과 같은 문장)
+  const badge=`<span class="badge fix">예상 견적</span>`;
+  const valHtml=`<span class="val">${won(subtotal)}</span>`;
+  const note=`부가세 별도 (세금계산서 발행 가능). 확정 전 예상 금액이에요. · 기본 3시간·배식 1시간 전 셋팅 포함.`+(needConsult?' 담당자가 조건을 확인한 뒤 확정해 드려요.':'')+(R.discountable?' '+QuoteCalc.DISCOUNT_NOTICE:'');
 
   const rHtml = reasons.map(r=>'<div>· '+r+'</div>').join('');
   const consult = needConsult ? '<div class="consult"><b>더 정확한 상담을 위해 담당자가 곧 연락드릴 예정입니다.</b>'+rHtml+'</div>' : '';
   const echo = `<div class="echo">📞 ${cname} · ${cphone}<span>위 번호가 정확한지 한 번만 더 확인해 주세요</span></div>`;
 
-  const amountText = exact ? won(subtotal) : (won(lo)+'~'+won(hi));
+  const amountText = won(subtotal);
   // ----- 카톡/문자 알림: 견적 안내 전체 내역을 텍스트로 -----
   const btxt=[];
   items.forEach(m=>btxt.push('- '+m.label+' '+m.qty+'인분: '+won(m.amount)));
@@ -777,7 +786,7 @@ document.getElementById('calc').onclick=()=>{
     +'\n담당자/회사: '+cname
     +'\n연락처: '+cphone
     +'\n지역: '+region+(loc?(' / 장소 '+loc):'')
-    +'\n배식시간: '+startH+'시~'+endH+'시'
+    +'\n배식시간: '+startH+'시~'+endLabel+'시'
     +'\n전기: '+(elec==='불가능'?'지원 불가 (자가발전기 사용)':'지원 가능')
     +'\n\n[견적 내역]\n'+btxt.join('\n')
     +(offMenu?('\n\n메뉴판외 요청: '+offMenu):'')
@@ -826,7 +835,7 @@ document.getElementById('calc').onclick=()=>{
     '담당자': cname,
     '연락처': cphone,
     '지역': region + (loc ? (' / ' + loc) : ''),
-    '배식': startH + '시~' + endH + '시',
+    '배식': startH + '시~' + endLabel + '시',
     '전기': (elec === '불가능' ? '지원 불가 (자가발전기)' : '지원 가능'),
     '내역': btxt.join('\n'),
     '금액': amountText + ' (VAT별도)',
@@ -834,11 +843,11 @@ document.getElementById('calc').onclick=()=>{
   }, { sid: qSid, reply: '간편 견적 화면에서 안내한 금액: '+amountText+' (VAT 별도)',
     lead: { contactName: cname, phone: cphone, region: region || '', venueStatus: loc || '', serveTime: String(startH).padStart(2,'0')+':00~'+String(endH).padStart(2,'0')+':00',
             menu: items.map(m=>m.label+' '+m.qty+'인분').join(', '), quote: amountText+' (VAT 별도)', note: [offMenu?('메뉴판외: '+offMenu):'', inquiry].filter(Boolean).join(' / ') },
-    quote: { mode: exact?'fixed':'range', subtotal, rangeLow: lo, rangeHigh: hi, region,
+    quote: { mode: 'fixed', subtotal, region,
       items: items.map(m=>({ name: m.label, servings: m.qty, unitPrice: m.price, amount: m.amount })),
       costs: { 출장비: travel, 자가발전기: gen, 추가시간: overFee, X배너: xb, 스티커: stk, 섹터이동: sector, 모니터: monitor, 실내부스: 0, 좌우현수막: R.bannerCost||0 },
       banners: bannerRows,
-      input: { powerAvailable: elec!=='불가능', serviceHours: endH-startH, startTime: String(startH).padStart(2,'0')+':00',
+      input: { powerAvailable: elec!=='불가능', serviceHours: serveH, startTime: String(startH).padStart(2,'0')+':00',
                sideBanners: faces.filter(f=>f==='좌'||f==='우'), venueStatus: loc||'',
                extras: [].concat(xbannerOn?[{name:'X배너',qty:xbannerQty}]:[], stickerOn?[{name:'스티커',qty:stickerBundle}]:[], exMap['섹터이동']?[{name:'섹터이동',qty:exMap['섹터이동']}]:[], exMap['모니터']?[{name:'모니터',qty:exMap['모니터']}]:[]) } } });
  }catch(err){
@@ -1023,6 +1032,62 @@ document.getElementById('calc').onclick=()=>{
     chipsEl.appendChild(box); draw(); scrollDown();
   }
 
+  // 연락처 카드: 금액 직전에 견적서 받을 곳(번호·이메일)을 받음. 제출·건너뛰기는 손님 말로 보냄(서버 api/chat.js와 같은 글자)
+  // mode 'ask' = 카드(건너뛰기 포함) / 'reopen' = 건너뛴 뒤 '견적서 받기' 버튼(누르면 카드, 건너뛰기 없음)
+  const CARD_SUBMIT = '견적서 받을 곳: ', CARD_SKIP = '번호 없이 대략 금액만 보기';
+  function renderContactCard(mode){
+    if (mode === 'reopen') {
+      renderChips([{ label: '견적서 받기', action: function(){ renderContactCard('open'); } }, { label: '↺ 새로 시작', action: restart }]);
+      return;
+    }
+    // 카드를 이미 본 뒤 답하지 않고 대화를 이어 간 손님: 큰 카드 대신 작은 버튼 두 개
+    if (mode === 'mini') {
+      renderChips([{ label: '견적서 받기', action: function(){ renderContactCard('ask'); } }, { label: CARD_SKIP }, { label: '↺ 새로 시작', action: restart }]);
+      return;
+    }
+    chipsEl.innerHTML = '';
+    const box = document.createElement('div'); box.className = 'cpick';
+    box.innerHTML = '<div class="ch">견적서 받을 곳</div>'
+      + '<div class="ct" role="group" aria-label="연락 방법"><button type="button" data-k="tel" aria-pressed="true">휴대폰·회사번호</button><button type="button" data-k="mail" aria-pressed="false">이메일</button></div>'
+      + '<input id="cardContact" type="tel" inputmode="numeric" autocomplete="tel" placeholder="010-1234-5678" aria-label="연락처">'
+      + '<div class="ce" role="alert"></div>'
+      + '<button type="button" class="go">견적서 받기</button>'
+      + '<div class="pv">결재 전·업체 비교 중이어도 괜찮아요. 항목별 금액을 바로 보여 드리고, 담당자가 견적서를 보내 드려요(이메일이면 메일로). 견적 안내에만 쓰고, 요청하시면 지워 드려요.</div>'
+      + (mode === 'ask' ? '<button type="button" class="sk">' + CARD_SKIP + '</button>' : '');
+    const inp = box.querySelector('input'), err = box.querySelector('.ce');
+    let kind = 'tel';
+    box.querySelectorAll('.ct button').forEach(function(b){
+      b.onclick = function(){
+        kind = b.dataset.k;
+        box.querySelectorAll('.ct button').forEach(function(x){ x.setAttribute('aria-pressed', String(x === b)); });
+        inp.type = kind === 'mail' ? 'email' : 'tel'; inp.inputMode = kind === 'mail' ? 'email' : 'numeric';
+        inp.autocomplete = kind === 'mail' ? 'email' : 'tel';
+        inp.placeholder = kind === 'mail' ? 'name@company.co.kr' : '010-1234-5678'; inp.value = ''; err.textContent = ''; inp.focus();
+      };
+    });
+    function submit(){
+      if (busy) return;
+      const v = inp.value.trim();
+      const ok = kind === 'mail' ? /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(v) : /^0\d{8,10}$/.test(v.replace(/\D/g, ''));
+      if (!ok) { err.textContent = kind === 'mail' ? '이메일 주소를 확인해 주세요. (예: name@company.co.kr)' : '번호를 확인해 주세요. (예: 010-1234-5678, 회사번호 02-123-4567)'; inp.focus(); return; }
+      send(CARD_SUBMIT + v);
+    }
+    box.querySelector('.go').onclick = submit;
+    inp.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+    const sk = box.querySelector('.sk'); if (sk) sk.onclick = function(){ if (!busy) send(CARD_SKIP); };
+    chipsEl.appendChild(box); scrollDown();
+  }
+  // 새로고침 뒤 카드 상태 되살리기: 연락처를 아직 안 남겼고, 마지막 봇 답이 카드 문장이면 카드 / 건너뛰었으면 버튼
+  function cardStateFromHistory(){
+    const users = history.filter(function(m){ return m.role === 'user'; }).map(function(m){ return m.content; }).join(' ');
+    if (/0\d{1,2}[-\s.]?\d{3,4}[-\s.]?\d{4}|[^\s@]+@[^\s@]+\.[A-Za-z]{2,}/.test(users)) return null;
+    const lastBot = (history.filter(function(m){ return m.role === 'assistant'; }).pop() || {}).content || '';
+    if (lastBot.indexOf('견적서를 받으실 연락처') >= 0) return 'ask';
+    if (history.some(function(m){ return m.role === 'user' && m.content.trim() === CARD_SKIP; })) return 'reopen';
+    if (history.some(function(m){ return m.role === 'assistant' && m.content.indexOf('견적서를 받으실 연락처') >= 0; })) return 'mini';
+    return null;
+  }
+
   function showError(msg){
     const p = document.createElement('div');
     p.className = 'err';
@@ -1063,6 +1128,7 @@ document.getElementById('calc').onclick=()=>{
         history.push({ role: 'assistant', content: reply });
         keep();
         if (data.picker && data.picker.kind === 'drinks') renderDrinkPicker(data.picker);
+        else if (data.card === 'ask' || data.card === 'reopen' || data.card === 'mini') renderContactCard(data.card);
         else renderChips([{ label: '↺ 새로 시작', action: restart }]);   // 대화 도중에도 처음부터 할 수 있게(전에는 새로고침 뒤에만 보였음)
       }
     } catch (e) {
@@ -1098,7 +1164,8 @@ document.getElementById('calc').onclick=()=>{
   while (saved.msgs.length && saved.msgs[saved.msgs.length - 1].role === 'user') saved.msgs.pop();
   if (saved.msgs.length) {
     saved.msgs.forEach(function(m){ if (m && typeof m.content === 'string') { history.push(m); addBubble(m.role, m.content); } });
-    renderChips([{ label: '↺ 새로 시작', action: restart }]);
+    const cs = cardStateFromHistory();
+    if (cs) renderContactCard(cs); else renderChips([{ label: '↺ 새로 시작', action: restart }]);
     if (typeof switchTab === 'function') switchTab('chat');   // 대화하다 새로고침했으면 대화 화면으로
   } else {
     renderChips(QUICK);
