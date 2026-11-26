@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const { logLead } = require('../lib/sheet-log.js');
 const { logChat } = require('../lib/chat-log.js');
 const { checkRate } = require('../lib/rate-limit.js');
-const { alertFailure } = require('../lib/slack-alert.js');
+const { alertFailure, postLead } = require('../lib/slack-alert.js');
 // 간편 견적 접수 문자가 안 나가면 담당자가 모름 → 슬랙으로 바로 알림(손님 이름·번호는 빼고, 11-23 잔액 0원 사고)
 const smsFail = (reason) => alertFailure('sms', { where: '간편 견적 접수', reason });
 
@@ -80,13 +80,6 @@ module.exports = async function handler(req, res) {
     } catch (e) {}
   }
 
-  if (!apiKey || !apiSecret || !from || !to) {
-    await smsFail('환경변수 미설정(SOLAPI_*·ALERT_TO)');
-    res.status(500).json({ ok: false, error: '환경변수가 비어 있습니다. SOLAPI_API_KEY, SOLAPI_API_SECRET, SOLAPI_SENDER, ALERT_TO 를 확인하세요.' });
-    return;
-  }
-
-
   // 문자(대체발송)용 전체 텍스트
   const text = (data.message || '새 견적 신청이 접수되었습니다.').toString().slice(0, 1000);
   // 알림톡 템플릿 치환값
@@ -103,6 +96,19 @@ module.exports = async function handler(req, res) {
     datetime: v ? (v['배식'] || '') : '',
     note: v ? [v['문의'], v['전기'] ? ('전기: ' + v['전기']) : ''].filter(Boolean).join(' / ') : text,
   });
+
+  // 슬랙 접수 채널이 설정돼 있으면 같은 내용을 보냄 — 슬랙이 갔으면 문자가 실패해도 접수 성공으로 답함
+  const slack = await postLead(text);
+  const fail = async (status, reason, body) => {
+    if (slack.ok) { res.status(200).json({ ok: true, channel: 'slack' }); return; }
+    await smsFail(reason);
+    res.status(status).json(body || { ok: false, reason });
+  };
+
+  if (!apiKey || !apiSecret || !from || !to) {
+    await fail(500, '환경변수 미설정(SOLAPI_*·ALERT_TO)', { ok: false, error: '환경변수가 비어 있습니다. SOLAPI_API_KEY, SOLAPI_API_SECRET, SOLAPI_SENDER, ALERT_TO 를 확인하세요.' });
+    return;
+  }
 
   // 문자(LMS) 메시지
   function lmsMessage() {
@@ -139,8 +145,7 @@ module.exports = async function handler(req, res) {
         res.status(200).json({ ok: true, channel: 'sms-fallback' });
         return;
       }
-      await smsFail(pickReason(sms.result, sms.status) || pickReason(ata.result, ata.status));
-      res.status(502).json({ ok: false, reason: pickReason(sms.result, sms.status) || pickReason(ata.result, ata.status) });
+      await fail(502, pickReason(sms.result, sms.status) || pickReason(ata.result, ata.status));
       return;
     }
 
@@ -150,10 +155,8 @@ module.exports = async function handler(req, res) {
       res.status(200).json({ ok: true, channel: 'sms' });
       return;
     }
-    await smsFail(pickReason(sms.result, sms.status));
-    res.status(502).json({ ok: false, reason: pickReason(sms.result, sms.status) });
+    await fail(502, pickReason(sms.result, sms.status));
   } catch (e) {
-    await smsFail(String((e && e.message) || e));
-    res.status(502).json({ ok: false, reason: String((e && e.message) || e) });
+    await fail(502, String((e && e.message) || e));
   }
 };
