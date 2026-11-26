@@ -59,6 +59,7 @@ const tools = [
           items: { type: 'object', properties: { name: { type: 'string' }, qty: { type: 'number' } }, required: ['name'] },
         },
         offMenu: { type: 'string', description: '메뉴판에 없는 요청(있으면 그대로)' },
+        topUpAgreed: { type: 'boolean', description: "최소 주문 금액 맞춤 동의: 계산 결과가 below_minimum이어서 손님에게 물었고, 손님이 '모자란 금액을 더해 진행'에 동의했을 때만 true. 손님이 답하기 전에는 넣지 않음" },
       },
       required: ['items', 'region'],
     },
@@ -230,7 +231,7 @@ async function handleLead(input, ctx = {}) {
   // 추가 접수에서 견적이 바뀌었으면 이전 → 지금
   const lc = [...calcs].reverse().find((c) => c && c.status === 'ok');
   // 음식값이 60만 원보다 적어 모자란 금액을 더한 견적 → 담당자가 견적서에 같은 줄로 옮기게(대표 확정 11-25)
-  if (lc && lc.costs && lc.costs.최소주문맞춤 > 0) tags.push(`최소 주문 금액 맞춤 +${won(lc.costs.최소주문맞춤)}원(음식값 ${won(lc.foodValue || 0)}원)`);
+  if (lc && lc.costs && lc.costs.최소주문맞춤 > 0) tags.push(`최소 주문 금액 맞춤 +${won(lc.costs.최소주문맞춤)}원(음식값 ${won(lc.foodValue || 0)}원, 손님 동의)`);
   const nowNums = lc ? [lc.subtotal] : null;
   const fmt = (ns) => (ns.length > 1 ? '약 ' : '') + ns.map(won).join('~') + '원';
   // 이번 견적이 앞서 보여 준 안 중 하나와 같으면 변경 아님(날짜만 고친 추가 접수 등)
@@ -472,6 +473,8 @@ module.exports = async function handler(req, res) {
           let out;
           if (tu.name === 'calculate_quote') {
             const cin = Object.assign({}, tu.input, tu.input && tu.input.eventDate ? { eventDate: fixPastDate(tu.input.eventDate).date } : {});   // 지난 날짜면 다음 해로(날짜 여유 조회용)
+            // 최소 주문 금액 맞춤은 손님 동의가 있어야 함: 앞선 답에서 맞춤을 물어본 적이 없으면 동의로 보지 않음(모델이 혼자 true를 넣는 것 막기)
+            if (cin.topUpAgreed && !messages.some((m) => m.role === 'assistant' && typeof m.content === 'string' && /최소 주문 금액 맞춤|minimum order/i.test(m.content))) cin.topUpAgreed = false;
             out = await calculateQuote(cin);
             // 영어 손님이면 장소 안내 자리에 정해 둔 영어 문구를 넣음(매뉴얼 지시만으로는 한국어 원문이 가끔 그대로 나감)
             if (english && out.venueNoticeEn) out = Object.assign({}, out, { venueNotice: out.venueNoticeEn });
@@ -564,7 +567,7 @@ module.exports = async function handler(req, res) {
         const known = new Set();
         const addNums = (s) => amounts(s).forEach((n) => [1, 0.1].forEach((k) => known.add(Math.round(n * k))));
         // 연락처 카드 전(ask)에는 이번 계산 금액을 아무것도 인정하지 않고, 건너뛴 손님(range)에는 대략 금액 한 숫자만 — 항목 금액이 새지 않게
-        calcs.forEach((c) => (c._gate === 'ask' ? [] : c._gate === 'range' ? c._rough : [c.subtotal, c.foodValue, c.minimum,
+        calcs.forEach((c) => (c._gate === 'ask' ? [] : c._gate === 'range' ? c._rough : [c.subtotal, c.foodValue, c.minimum, c.short,
           ...Object.values(c.costs || {}), ...(c.items || []).map((i) => i.amount)]).forEach((n) => {
           if (Number(n) > 0) [1, 0.1].forEach((k) => known.add(Math.round(Number(n) * k)));   // 부가세 액수(10%)까지만 — 부가세 포함 금액은 손님에게 말하지 않음(대표 결정 11-25)
         }));
