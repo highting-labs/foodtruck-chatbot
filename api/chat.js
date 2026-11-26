@@ -491,6 +491,12 @@ module.exports = async function handler(req, res) {
                 ? Object.assign(base, { status: 'contact_first', message: '[봇에게] 계산은 끝났어요. 연락처를 받기 전이라 금액은 말하지 마세요(합계·항목 금액·단가 곱셈 모두). 받은 조건(메뉴·인분·지역·날짜)만 한두 줄로 확인하고 끝내세요. 연락처·contact를 묻거나 필요하다고 말하는 문장은 쓰지 말고(화면이 연락처 카드를 띄움), 아직 접수 전이라 "접수"라는 말도 쓰지 마세요. 손님 언어로 답하세요.' })
                 : Object.assign(base, { status: 'range_only', approx: english ? `about ${rough[0].toLocaleString('en-US')} KRW (VAT excluded, estimate)` : `대략 ${rough[0] / 10000}만 원(부가세 별도, 확정 전)`,
                   message: '[봇에게] 손님이 연락처 카드를 건너뛰었어요. approx 대략 금액만 그대로 보여 주세요(범위로 바꾸지 말 것). 항목별 금액·단가 곱셈·**합계** 줄은 쓰지 말고, 연락처를 다시 권하지 마세요(화면에 견적서 받기 버튼이 남아 있음). 손님이 연락처를 남기기 싫다고 했어도 대표번호를 붙이지 말고 이 금액으로 답하세요. 손님이 항목별 금액·출장비를 물으면 계산이 안 된 것처럼 말하지 말고 "항목별 금액은 [견적서 받기]로 번호나 이메일을 남겨 주시면 바로 보여 드려요"라고 이유를 말하세요. 할인 이야기는 손님이 묻기 전에는 하지 마세요. 손님 언어로 답하세요(영어 손님이면 영어).' });
+            } else if (gate && out.status === 'below_minimum' && (out.items || []).length) {
+              // 연락처 전 최소 미달: 항목 금액·음식값은 숨기고 모자란 금액과 두 가지 방법만(사용자 결정 11-26). 연락처를 받은 뒤에는 그대로 다 보여 줌
+              const c = calcs[calcs.length - 1], w = (n) => Math.round(n).toLocaleString('ko-KR');
+              c._gate = gate; c._min = true; meta.tools[meta.tools.length - 1].gate = gate;
+              out = { status: 'below_minimum', menu: out.items.map((x) => `${x.label} ${x.qty}인분`).join(', '), minimum: out.minimum, short: out.short,
+                message: `[봇에게] 음식값이 최소 주문 금액(음식값 ${w(out.minimum)}원, 부가세 별도, 출장비 따로)보다 ${w(out.short)}원 모자라요. 연락처를 받기 전이라 항목 금액(단가 × 수량 — 금액)과 음식값 합계는 쓰지 말고, 모자란 금액만 알려 주세요. 손님 동의 없이 금액을 더하지 말고 이렇게 물어보세요: "최소 주문은 음식값 ${w(out.minimum)}원부터인데, 말씀하신 메뉴는 ${w(out.short)}원이 모자라요. ① 메뉴·수량은 그대로 두고 모자란 ${w(out.short)}원을 '최소 주문 금액 맞춤'으로 더해 진행하거나 ② 메뉴나 수량을 늘려 맞추실 수 있어요. 어떻게 할까요?" 손님이 ①에 동의하면 topUpAgreed:true를 넣어 다시 계산하고, ②면 바꾼 메뉴·수량으로 다시 계산하세요. 연락처를 묻는 문장은 쓰지 마세요(화면이 연락처 카드를 띄움). '보정'이라는 말은 쓰지 말 것. 손님 언어로 답하세요.` };
             }
           } else if (tu.name === 'submit_lead' && !String((tu.input || {}).phone || '').trim() && !String((tu.input || {}).email || '').trim()) {
             out = { status: 'need_contact', message: '[봇에게] 번호나 이메일이 없어 접수하지 않았어요. 연락처를 받은 뒤에 다시 부르세요.' };
@@ -567,7 +573,7 @@ module.exports = async function handler(req, res) {
         const known = new Set();
         const addNums = (s) => amounts(s).forEach((n) => [1, 0.1].forEach((k) => known.add(Math.round(n * k))));
         // 연락처 카드 전(ask)에는 이번 계산 금액을 아무것도 인정하지 않고, 건너뛴 손님(range)에는 대략 금액 한 숫자만 — 항목 금액이 새지 않게
-        calcs.forEach((c) => (c._gate === 'ask' ? [] : c._gate === 'range' ? c._rough : [c.subtotal, c.foodValue, c.minimum, c.short,
+        calcs.forEach((c) => (c._min ? [c.minimum, c.short] : c._gate === 'ask' ? [] : c._gate === 'range' ? c._rough : [c.subtotal, c.foodValue, c.minimum, c.short,
           ...Object.values(c.costs || {}), ...(c.items || []).map((i) => i.amount)]).forEach((n) => {
           if (Number(n) > 0) [1, 0.1].forEach((k) => known.add(Math.round(Number(n) * k)));   // 부가세 액수(10%)까지만 — 부가세 포함 금액은 손님에게 말하지 않음(대표 결정 11-25)
         }));
