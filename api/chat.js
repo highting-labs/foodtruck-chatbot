@@ -705,6 +705,24 @@ module.exports = async function handler(req, res) {
         meta.lead = true;
         leadKind = leadKind || 'update';
       }
+      // 손님이 번호·이메일을 줬는데 모델이 접수(submit_lead)를 빠뜨렸으면 서버가 대신 접수 — 접수 손실 막기
+      // (회귀 재생 11-26: 번호를 받고 견적만 보여 준 뒤, 다음 답에서 도구 없이 "접수해 두었어요"라고 함)
+      if (!leadBefore && !meta.lead && (PHONE_RE.test(userTexts) || EMAIL_RE.test(userTexts))) {
+        const phones = userTexts.match(new RegExp(PHONE_RE.source, 'g')) || [];
+        const input = {
+          contactName: '미기재',
+          phone: phones.length ? phones[phones.length - 1] : '',
+          email: (userTexts.match(EMAIL_RE) || [])[0] || '',
+          menu: lastCalc ? (lastCalc.items || []).map((i) => `${i.name} ${i.servings}`).join(', ') : '',
+          region: lastCalc ? lastCalc.region || '' : '',
+          note: '챗봇이 접수를 빠뜨려 서버가 대신 접수함 — 성함·세부 내용은 상담 기록에서 확인',
+        };
+        const history = messages.filter((m) => m.role === 'assistant').map((m) => m.content);
+        const out = await handleLead(input, { botTexts: [...history, ...preTexts], calcs, history, sessionId, card: { shown: cardShown || cardSkipped, skipped: cardSkipped } });
+        meta.tools.push({ name: 'submit_lead', input, status: out.status, auto: true });
+        meta.lead = true;
+        leadKind = leadKind || 'new';
+      }
       // 한국어로 돌아온 손님에게 앞 턴의 영어 장소 안내를 그대로 다시 쓰는 일(Haiku 회귀 1턴) → 정해 둔 한국어 원문으로 바꿈
       if (!english) reply = reply.split(VENUE_NOTICE_EN_FULL).join(VENUE_NOTICE_FULL).split(VENUE_NOTICE_EN_SHORT).join(VENUE_NOTICE_SHORT);
       // 이번 요청에서 접수했으면 답 끝에 정해진 접수 표시 줄(다음 턴의 '이미 접수됨' 판단 근거 + 손님에게도 분명히)
