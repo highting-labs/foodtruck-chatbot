@@ -107,6 +107,11 @@ test('연락처 판정: 남의 번호로 말한 것은 손님 연락처가 아�
   assert.deepEqual(ownContacts(u('현장 담당자분 번호는 010-5555-0188입니다. 이쪽으로 연락 주세요.')).phones, ['010-5555-0188']);
   assert.deepEqual(ownContacts(u('관리실 번호는 02-123-4567이에요. 견적서는 메일로 보내 주세요.')).phones, []);
   assert.deepEqual(ownContacts(u('친구 010-2222-3333 한테 들었어요')).phones, []);
+  assert.deepEqual(ownContacts(u('I need 200 cups in Gangnam-gu. The venue office number is 02-123-4567.')).phones, []);   // 실제 모델 시험에서 대신 접수되던 문장
+  assert.deepEqual(ownContacts(u("My friend's phone number is 010-2222-3333")).phones, []);
+  assert.deepEqual(ownContacts(u('My office number is 02-123-4567')).phones, ['02-123-4567']);
+  assert.deepEqual(ownContacts(u('You can reach me at 010-5555-0144')).phones, ['010-5555-0144']);
+  assert.deepEqual(ownContacts(u('The venue manager number is 010-5555-0144, please call him')).phones, ['010-5555-0144']);
   assert.deepEqual(ownContacts(u('010-2222-3333은 경비실이에요')).phones, []);
   assert.deepEqual(ownContacts(u('010-2222-3333 이 번호로는 연락하지 마세요')).phones, []);
   assert.deepEqual(ownContacts(u('010-5555-0199')).phones, ['010-5555-0199']);
@@ -371,6 +376,41 @@ test('알림·시트·상담 기록 모두 실패: 접수됐다고 하지 않고
   assert.match(r.reply, /1877-6901/);
   assert.equal(r.body.leadFailed, true);
   assert.equal(r.calls.slackQuote.length, 2);   // 문자 실패 알림 + 모두 실패 알림
+});
+
+// ───────── 영어 대화 ─────────
+const EN_TURN = {
+  messages: [{ role: 'user', content: 'Hello, I need a quote for 200 cups of the basic coffee set in Gangnam. My phone number is 010-5555-0199' }],
+  script: () => [tool('calculate_quote', BASIC200), tool('submit_lead', { contactName: 'N/A', phone: '010-5555-0199', menu: 'Basic set 200 cups' }), text('**Total 800,000 KRW**\nYour request is in.')],
+};
+
+test('영어 대화: 접수 표시가 영어로, 알림 실패 때는 "received"', async () => {
+  const ok = await run({ messages: EN_TURN.messages, script: EN_TURN.script() });
+  assert.equal(lastLine(ok.reply), '✅ Your request has been sent to our staff.');
+  assert.equal(ok.calls.sms.length, 1);
+  const stored = await run({ messages: EN_TURN.messages, script: EN_TURN.script(), solapi: 'fail' });
+  assert.equal(lastLine(stored.reply), '✅ Your request has been received. Our staff will check and contact you.');
+});
+
+test('영어 대화: 알림·시트·상담 기록 모두 실패하면 영어로 실패 안내, 다음 턴에 다시 접수 가능', async () => {
+  const r = await run({ messages: EN_TURN.messages, script: EN_TURN.script(), solapi: 'fail', sheet: 'fail', chatlog: 'fail' });
+  assert.ok(!r.reply.includes('✅'));
+  assert.match(r.reply, /could not be delivered/);
+  const again = await run({
+    messages: [...EN_TURN.messages, { role: 'assistant', content: r.reply }, { role: 'user', content: 'Please send it again' }],
+    script: EN_TURN.script(),
+  });
+  assert.equal(again.calls.sms.length, 1);
+  assert.match(again.calls.sms[0], /^\[푸드트럭하우스 챗봇 상담 신청\]/);
+});
+
+test('영어 대화: 남의 번호(venue)로 말한 것은 대신 접수하지 않음', async () => {
+  const r = await run({
+    messages: [{ role: 'user', content: 'I need 200 cups of the basic coffee set in Gangnam. The venue number is 02-123-4567' }],
+    script: [tool('calculate_quote', BASIC200), text('Got it: basic set, 200 cups, Gangnam.')],
+  });
+  assert.equal(r.calls.sms.length, 0);
+  assert.ok(!r.reply.includes('✅'));
 });
 
 test('모두 실패한 다음 턴: 접수 표시가 없으므로 다시 접수됨(새 접수로)', async () => {
