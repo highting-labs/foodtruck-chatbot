@@ -100,14 +100,7 @@ const RANGE_LINE = { ko: '항목별 금액과 견적서는 아래 [견적서 받
 const SKIP_TEXT = /^\s*(번호 없이 대략 금액만 보기|나중에 할게요, 대략 금액만 볼게요|See a rough range without contact|Maybe later, just show me a rough range)\s*$/;
 // 카드 버튼 대신 손님이 직접 "번호 남기기 싫어요, 금액만" 같이 쳐도 건너뛴 것으로 봄(같은 카드를 두 번 띄우지 않게)
 const SKIP_SAID = /번호.{0,8}(싫|안\s?남|못\s?남|말고|부담)|남기기\s?(싫|어렵|부담)|연락처\s?(없이|는\s?싫|싫|안\s?남|못\s?남)|(그냥|일단|대략)\s?(금액|가격)|(금액|가격)만\s?(알려|보여|볼게|궁금)|no (phone|contact)|without (my )?(phone|contact)|just (the )?(price|range)/i;
-const PHONE_RE = /010[-\s.]?\d{4}[-\s.]?\d{4}|01[16789][-\s.]?\d{3,4}[-\s.]?\d{4}|0[2-6]\d?[-\s.]?\d{3,4}[-\s.]?\d{4}/;   // 휴대폰 + 회사 유선(02·031 등)
-// 접수에 적힌 휴대폰 번호가 이상한지: 010인데 11자리가 아니거나, 손님 글에 그 숫자가 없음(이메일이 있으면 그걸로 연락 가능하니 통과)
-const badPhone = (inp, userText) => {
-  const d = String((inp || {}).phone || '').replace(/\D/g, '');
-  if (!d || String((inp || {}).email || '').trim()) return false;
-  return (/^010/.test(d) && d.length !== 11) || (/^01/.test(d) && !String(userText || '').replace(/\D/g, '').includes(d));
-};
-const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+const { PHONE_RE, EMAIL_RE, ownContacts, vetContact } = require('../lib/contact.js');   // 연락처 판정(남의 번호·자릿수·이메일 모양)
 const man = (n, up) => (up ? Math.ceil(n / 10000) : Math.floor(n / 10000)) * 10000;   // 만 원 단위로
 // 건너뛴 손님에게 보여 줄 대략 금액: 합계를 만 원 단위로 올린 한 금액(범위는 쓰지 않음 — 대표 결정 11-26). 항목별 금액은 연락처를 남긴 뒤에
 const roughAmount = (c) => [man(c.subtotal, true)];
@@ -115,11 +108,18 @@ const roughAmount = (c) => [man(c.subtotal, true)];
 // 접수가 실제로 된 답 끝에 서버가 붙이는 정해진 한 줄 — 화면이 답 글을 그대로 다시 보내므로 다음 턴에 이 줄로 '이미 접수됨'을 안다
 // (서버는 이전 턴의 도구 호출을 받지 못함. 모델이 "접수 안 됐다"고 단정하던 일 막기)
 const LEAD_MARK = { ko: '✅ 상담 접수 완료 — 담당자에게 전달됐어요', koUpdate: '✅ 추가 정보 전달 완료 — 담당자에게 전달됐어요', en: '✅ Your request has been sent to our staff.' };
+// 담당자 알림(문자·슬랙)은 실패했지만 기록(구글 시트·보드 상담 기록)에는 남은 접수 — "전달됐어요"라고 하지 않음(11-27)
+const LEAD_MARK_STORED = { ko: '✅ 상담 접수 완료 — 담당자가 확인 후 연락드려요', koUpdate: '✅ 추가 정보 접수 완료 — 담당자가 확인 후 연락드려요', en: '✅ Your request has been received. Our staff will check and contact you.' };
+// 알림도 기록도 모두 실패 — 접수됐다고 하지 않고 다시 보내 달라고 안내(다음 턴에 다시 접수할 수 있게 ✅ 표시를 붙이지 않음)
+const LEAD_FAIL = { ko: '죄송해요, 지금 상담 신청이 담당자에게 전달되지 않았어요. 잠시 후 다시 보내 주시거나 대표번호 1877-6901로 연락 주세요.', en: 'Sorry, your request could not be delivered just now. Please send it again in a moment or call us at 1877-6901.' };
+const leadMark = (state, kind, english) => { const M = state === 'stored' ? LEAD_MARK_STORED : LEAD_MARK; return english ? M.en : kind === 'update' ? M.koUpdate : M.ko; };
+// 이번 요청의 접수들이 어디까지 갔는지: delivered(모두 알림 감) / stored(알림은 실패, 시트에는 남음) / pending(시트도 안 됨 — 상담 기록 저장 결과로 정함)
+const leadState = (ds) => (!ds.length ? null : ds.every((d) => d.alert === 'ok') ? 'delivered' : ds.every((d) => d.alert === 'ok' || d.sheet === 'ok') ? 'stored' : 'pending');
 // 판단은 챗봇 답의 '마지막 줄'이 표시 줄과 정확히 같을 때만 — 모델이 문장 안에서 인용하거나 손님이 붙여 넣은 문구로 잘못 판단하지 않게
 // (예전의 "접수됐어요" 같은 문장 판단은 모델이 접수 없이 말해도 걸려서 쓰지 않음)
-const LEAD_MARKS = Object.values(LEAD_MARK);
+const LEAD_MARKS = [...Object.values(LEAD_MARK), ...Object.values(LEAD_MARK_STORED)];
 const endsWithLeadMark = (s) => { const ls = String(s || '').trim().split('\n'); return LEAD_MARKS.includes(ls[ls.length - 1].trim()); };
-const LEAD_MARK_ANY = /✅\s*(?=상담 접수 완료|추가 정보 전달 완료|Your request has been sent)/g;   // 모델이 직접 쓴 표시 문구는 ✅만 뗌(문장은 살리고, 표시 줄로는 못 보이게 — 서버만 붙임)
+const LEAD_MARK_ANY = /✅\s*(?=상담 접수 완료|추가 정보 전달 완료|추가 정보 접수 완료|Your request has been sent|Your request has been received\. Our staff will check)/g;   // 모델이 직접 쓴 표시 문구는 ✅만 뗌(문장은 살리고, 표시 줄로는 못 보이게 — 서버만 붙임)
 
 // 손님이 넣은 값 정리 — 담당자 문자에 줄바꿈으로 가짜 머리글·"대표 승인 완료" 같은 줄이 끼던 일 막기
 // 칸마다 줄바꿈을 공백으로, 길이 제한, 링크·머리글처럼 보이면 표시를 붙임
@@ -313,12 +313,9 @@ async function handleLead(input, ctx = {}) {
   if (p.note) lines.push(`문의: ${p.note}`);
 
   const res = await sendLeadAlert(lines.join('\n'));
-  // 문자가 안 나가면 담당자가 접수를 모름 → 슬랙으로 바로 알림(손님 이름·번호는 빼고)
-  if (!res.ok) await alertFailure('sms', { where: '챗봇 접수', reason: res.reason, sessionId: ctx.sessionId, summary: [p.menu, p.region, p.isUpdate ? '추가 정보' : '신규'].filter(Boolean).join(' · ') });
 
-  // 구글시트에도 영구 기록(문자를 놓쳐도 리드를 잃지 않기 위함). 실패해도 무시.
-  // 시트 칸은 Apps Script에 고정돼 있어 음료 구성은 note에 붙임
-  await logLead({
+  // 구글시트에도 영구 기록(문자를 놓쳐도 리드를 잃지 않기 위함). 시트 칸은 Apps Script에 고정돼 있어 음료 구성은 note에 붙임
+  const sheet = await logLead({
     source: '대화형챗봇',
     contactName: sheetSafe(p.contactName),
     phone: sheetSafe(p.phone || (p.email ? `이메일 ${p.email}` : '')),
@@ -328,11 +325,29 @@ async function handleLead(input, ctx = {}) {
     datetime: sheetSafe(when ? when + (ctx.dateNote || '') : p.datetime),
     note: sheetSafe([p.note, p.drinkChoice && `음료 구성: ${p.drinkChoice}`].filter(Boolean).join(' / ')),
   });
+  const delivery = { alert: res.ok ? 'ok' : 'fail', channel: res.channel || (res.ok ? 'sms' : undefined), sheet: sheet.ok ? 'ok' : sheet.skipped ? 'skip' : 'fail' };
+  if (delivery.sheet === 'fail') console.warn('sheet log failed:', sheet.status || sheet.error || 'error');
+  // 문자·슬랙이 안 나가면 담당자가 접수를 모름 → 장애 채널로 바로 알림(손님 이름·번호는 빼고). 시트 기록 결과도 같이 적음
+  if (!res.ok) await alertFailure('sms', { where: '챗봇 접수', reason: `${res.reason || '-'} / 구글 시트 기록: ${delivery.sheet === 'ok' ? '됨' : delivery.sheet === 'skip' ? '설정 없음' : '실패'}`, sessionId: ctx.sessionId, summary: [p.menu, p.region, p.isUpdate ? '추가 정보' : '신규'].filter(Boolean).join(' · ') });
 
-  // AI에게는 항상 접수됨을 알려 고객에게 안심 안내하도록 한다(발송 실패해도 대화상 리드는 남음).
+  // 값의 출처 구분(보드 상담 기록 meta에만 덧붙임 — 기존 칸은 그대로): 손님이 말한 값 / 계산기가 낸 값 / 챗봇이 기본으로 둔 값 / 담당자가 확인할 것
+  const said = {};
+  ['contactName', 'company', 'contactPerson', 'phone', 'email', 'eventDate', 'serveTime', 'address', 'region', 'menu', 'payMethod', 'callTime'].forEach((k) => { if (p[k] && p[k] !== '미기재' && !auto) said[k] = p[k]; });
+  if (p.drinkChoice && !/^기본 구성/.test(p.drinkChoice)) said.drinkChoice = p.drinkChoice;
+  const assumed = [];
+  if (power.startsWith('확인')) assumed.push('전기 220V 연결 가능');
+  if (banner.startsWith('확인')) assumed.push('현수막 상단·중앙만');
+  if (/^기본 구성/.test(p.drinkChoice || '')) assumed.push('음료 기본 구성');
+  if (lc && !ci.serviceHours) assumed.push('배식 3시간');
+  const lastAnyCalc = calcs[calcs.length - 1];
+  const computed = lc ? { subtotal: lc.subtotal, foodValue: lc.foodValue, travel: (lc.costs || {}).출장비, topUp: (lc.costs || {}).최소주문맞춤, trucks: lc.trucks || 1 }
+    : lastAnyCalc && lastAnyCalc.status === 'below_minimum' ? { status: 'below_minimum', minimum: lastAnyCalc.minimum, short: lastAnyCalc.short } : null;
+  const fields = { said, computed, assumed, needsCheck: missing };
+
+  // 모델에게: 알림이 갔을 때만 "전달됨". 알림이 실패했으면 "접수됨(담당자 확인 예정)"까지만 말하게
   return res.ok
-    ? { status: 'submitted', message: '담당자에게 상담 신청이 전달되었습니다.' }
-    : { status: 'received', message: '상담 신청이 접수되었습니다. (담당자 확인 예정)' };
+    ? { status: 'submitted', message: '담당자에게 상담 신청이 전달되었습니다.', delivery, fields }
+    : { status: 'received', message: '상담 신청이 접수되었습니다. (담당자 확인 예정) [봇에게] "담당자에게 전달됐다"·"몇 분 안에 연락드린다"고 하지 말고, "접수됐고 담당자가 확인 후 연락드린다"고만 말하세요.', delivery, fields };
 }
 
 // 한국 시간 오늘 날짜 (예: 오늘: 2026-11-06 (금))
@@ -433,8 +448,12 @@ module.exports = async function handler(req, res) {
     const cardShown = messages.some(isCard);
     // 직접 친 거절 말은 카드를 한 번 본 뒤에만 건너뛰기로 봄("금액만 알려 주세요"로 시작한 손님도 카드는 한 번 보게)
     const cardSkipped = messages.some((m, i) => m.role === 'user' && (SKIP_TEXT.test(m.content) || (SKIP_SAID.test(m.content) && messages.slice(0, i).some(isCard))));
-    const hasContact = PHONE_RE.test(userAll) || EMAIL_RE.test(userAll) || leadSent;
-    const emailOnly = EMAIL_RE.test(userAll) && !PHONE_RE.test(userAll);
+    // 남의 번호로 말한 것(관리실·친구 번호 등)은 손님 연락처로 보지 않음(11-27) — lib/contact.js
+    const own = ownContacts(messages);
+    const hasContact = own.phones.length > 0 || own.emails.length > 0 || leadSent;
+    const emailOnly = own.emails.length > 0 && !own.phones.length;
+    const leadDeliveries = [];   // 이번 요청에서 보낸 접수들의 전달·기록 결과
+    let lastLeadKey = '', lastLeadOut = null;   // 같은 답 안에서 같은 내용으로 두 번 접수하는 일 막기
     const gate = hasContact ? null : cardSkipped ? 'range' : 'ask';
     const quoteBefore = messages.some((m) => m.role === 'assistant' && /\*\*(합계|Total)/.test(m.content));
     const cardNote = hasContact && (cardShown || cardSkipped) && !quoteBefore && !leadSent
@@ -521,15 +540,28 @@ module.exports = async function handler(req, res) {
               out = { status: 'below_minimum', menu: out.items.map((x) => `${x.label} ${x.qty}인분`).join(', '), minimum: out.minimum, short: out.short,
                 message: `[봇에게] 음식값이 최소 주문 금액(음식값 ${w(out.minimum)}원, 부가세 별도, 출장비 따로)보다 ${w(out.short)}원 모자라요. 연락처를 받기 전이라 항목 금액(단가 × 수량 — 금액)과 음식값 합계는 쓰지 말고, 모자란 금액만 알려 주세요. 손님 동의 없이 금액을 더하지 말고 이렇게 물어보세요: "최소 주문은 음식값 ${w(out.minimum)}원부터인데, 말씀하신 메뉴는 ${w(out.short)}원이 모자라요. ① 메뉴·수량은 그대로 두고 모자란 ${w(out.short)}원을 '최소 주문 금액 맞춤'으로 더해 진행하거나 ② 메뉴나 수량을 늘려 맞추실 수 있어요. 어떻게 할까요?" 손님이 ①에 동의하면 topUpAgreed:true를 넣어 다시 계산하고, ②면 바꾼 메뉴·수량으로 다시 계산하세요. 연락처를 묻는 문장은 쓰지 마세요(화면이 연락처 카드를 띄움). '보정'이라는 말은 쓰지 말 것. 손님 언어로 답하세요.` };
             }
-          } else if (tu.name === 'submit_lead' && badPhone(tu.input, userAll)) {
-            // 010 번호는 11자리여야 하고, 손님이 쓴 숫자 그대로여야 함 — 아니면 접수하지 않고 다시 확인(11-27: 0101111111이 접수됨, 모델이 숫자를 보태 11자리로 만들기도 함)
-            out = { status: 'check_phone', message: '[봇에게] 휴대폰 번호 자릿수가 맞지 않아 접수하지 않았어요(010 번호는 11자리). "번호가 한 자리 빠진 것 같아요. 다시 한 번 확인해 주시겠어요?"처럼 다시 물어보고, 접수했다고 말하지 마세요.' };
-            meta.tools.push({ name: 'submit_lead', input: cleanLead(tu.input), status: 'check_phone' });
-          } else if (tu.name === 'submit_lead' && !String((tu.input || {}).phone || '').trim() && !String((tu.input || {}).email || '').trim()) {
-            out = { status: 'need_contact', message: '[봇에게] 번호나 이메일이 없어 접수하지 않았어요. 연락처를 받은 뒤에 다시 부르세요.' };
-            meta.tools.push({ name: 'submit_lead', input: cleanLead(tu.input), status: 'need_contact' });
+          } else if (tu.name === 'submit_lead' && vetContact(tu.input, messages).status) {
+            // 접수하지 않는 경우: 연락처 없음 / 010 자릿수·손님 글에 없는 번호 / 이메일 모양 / 남의 번호로 말한 번호(먼저 확인)
+            const vetted = vetContact(tu.input, messages), why = vetted.status;
+            const msg = vetted.reason === 'mismatch'
+              // 자릿수는 맞는데 손님 글의 숫자와 다름 — "한 자리 빠졌다"고 하면 틀린 안내(11-27 회귀: 그 말로 6번 사과함)
+              ? '[봇에게] 접수하려는 번호가 손님이 쓴 번호와 달라 접수하지 않았어요. 손님이 쓴 번호를 그대로 넣어 다시 접수하세요. 번호를 읽기 어려우면 "번호를 숫자로 한 번만 다시 적어 주시겠어요?"라고만 물어보세요. "자릿수가 틀렸다"·"한 자리 빠졌다"고 말하지 말고, 접수했다고도 말하지 마세요.'
+              : {
+              need_contact: '[봇에게] 번호나 이메일이 없어 접수하지 않았어요. 연락처를 받은 뒤에 다시 부르세요.',
+              check_phone: '[봇에게] 휴대폰 번호 자릿수가 맞지 않아 접수하지 않았어요(010 번호는 11자리). "번호가 한 자리 빠진 것 같아요. 다시 한 번 확인해 주시겠어요?"처럼 다시 물어보고, 접수했다고 말하지 마세요.',
+              check_email: '[봇에게] 이메일 주소가 맞지 않아 접수하지 않았어요. "이메일 주소를 다시 한 번 확인해 주시겠어요?"라고 물어보고, 접수했다고 말하지 마세요.',
+              confirm_contact: '[봇에게] 이 번호는 손님이 다른 사람·장소의 번호로 말한 것이라 접수하지 않았어요. "견적서와 확인 연락을 이 번호로 드리면 될까요? 아니면 다른 연락처를 남겨 주시겠어요?"라고 물어보고, 접수했다고 말하지 마세요.',
+            }[why];
+            out = { status: why, message: msg };
+            // 보드는 submit_lead 기록의 input을 접수 정보로 읽음 — 받아들이지 않은 연락처가 접수 연락처처럼 보이지 않게 input에서 빼고 rejected에 따로 남김
+            const tried = cleanLead(tu.input), rejected = {};
+            ['phone', 'email'].forEach((k) => { if (tried[k]) { rejected[k] = tried[k]; delete tried[k]; } });
+            meta.tools.push(Object.assign({ name: 'submit_lead', input: tried, status: why }, Object.keys(rejected).length ? { rejected } : {}));
           } else if (tu.name === 'submit_lead') {
             const input = cleanLead(tu.input);   // 손님이 넣은 값 정리(문자·시트·보드 기록 모두 이 값)
+            const vet = vetContact(tu.input, messages);   // 한쪽 연락처만 이상하면 그쪽만 빼고 접수
+            if (vet.dropPhone) { input.note = [input.note, `챗봇이 적은 번호(${input.phone})는 손님 글과 맞지 않아 뺌`].filter(Boolean).join(' / '); input.phone = ''; }
+            if (vet.dropEmail) { input.note = [input.note, '챗봇이 적은 이메일은 손님 글과 맞지 않아 뺌'].filter(Boolean).join(' / '); input.email = ''; }
             if (leadSent) input.isUpdate = true;   // 모델이 isUpdate를 빠뜨려 같은 손님이 '상담 신청'으로 여러 번 들어가던 일 막기
             else input.isUpdate = false;           // 반대로 첫 접수인데 모델이 isUpdate를 붙이면 '추가 정보'로 들어가 신규가 묻히던 일(11-25 dev 합본 시험)
             leadSent = true;
@@ -539,7 +571,12 @@ module.exports = async function handler(req, res) {
             if (fd.note && fd.date !== origDate && typeof input.datetime === 'string') input.datetime = input.datetime.split(origDate).join(fd.date);
             const history = messages.filter((m) => m.role === 'assistant').map((m) => m.content);
             const botTexts = [...history, ...preTexts];
-            out = await handleLead(input, { dateNote: fd.note, botTexts, calcs, history, sessionId, card: { shown: cardShown || cardSkipped, skipped: cardSkipped } });
+            const leadKey = JSON.stringify(Object.assign({}, input, { isUpdate: undefined }));
+            const dup = leadKey === lastLeadKey && lastLeadOut;   // 같은 답 안에서 같은 내용을 또 접수하려 하면 다시 보내지 않음
+            const full = dup ? lastLeadOut : await handleLead(input, { dateNote: fd.note, botTexts, calcs, history, sessionId, card: { shown: cardShown || cardSkipped, skipped: cardSkipped } });
+            if (!dup) { leadDeliveries.push(full.delivery); lastLeadKey = leadKey; lastLeadOut = full; }
+            out = { status: full.status, message: dup ? '[봇에게] 방금 같은 내용으로 이미 접수했어요. 다시 접수하지 않았어요.' : full.message };
+            const leadMeta = dup ? { duplicate: true } : { delivery: full.delivery, fields: full.fields };
             // 날짜가 있으면 그날 직영 여유(보드 '챗봇 상담'에 🟢/🟡/🟠로 표시 + 이후 응대 깊이)
             // 전기 없다는 말이 대화에 있었으면 발전기까지 따져서 판단 (예전엔 빠져서 발전기 모자란 날도 '여유'로 나왔음)
             const allUser = convo.filter((m) => m.role === 'user' && typeof m.content === 'string').map((m) => m.content).join(' ');
@@ -548,7 +585,7 @@ module.exports = async function handler(req, res) {
             const guide = capacityGuide(cap); if (guide) out = Object.assign({}, out, { note: guide });
             // 연락처와 함께 온 질문을 접수 인사로 덮어 버리는 일이 잦아서 도구 결과에 다시 짚어 줌
             out = Object.assign({}, out, { reminder: '[봇에게] 손님의 마지막 말에 질문(결제·가격·가능 여부 등)이 있었다면 답의 첫 줄에서 그 질문에 먼저 답한 뒤 접수 안내를 하세요.' });
-            meta.tools.push({ name: 'submit_lead', input, status: out.status, capacity: cap ? cap.level : undefined });
+            meta.tools.push(Object.assign({ name: 'submit_lead', input, status: out.status, capacity: cap ? cap.level : undefined }, leadMeta));
             meta.lead = true;
             leadKind = leadKind === 'new' || !input.isUpdate ? 'new' : 'update';   // 답 끝 접수 표시 줄 고르기
           } else {
@@ -626,7 +663,7 @@ module.exports = async function handler(req, res) {
       // 조율·확인이 필요한 답은 접수로 이어지게(전화로 넘기지 않음): 아직 번호를 안 받았고 이번 대화에서 연락처를 물은 적도 없으면 한 줄 붙임
       // (규칙 글만으로는 "인원·지역 알려 주세요"로 끝나는 경우가 있어 서버에서 보장)
       const userTexts = convo.filter((m) => m.role === 'user' && typeof m.content === 'string').map((m) => m.content).join(' ');
-      const hasPhone = PHONE_RE.test(userTexts) || EMAIL_RE.test(userTexts) || meta.lead;   // 이메일·회사 유선도 연락처로 봄
+      const hasPhone = own.phones.length > 0 || own.emails.length > 0 || meta.lead;   // 이메일·회사 유선도 연락처로 봄
       const askedBefore = messages.some((m) => m.role === 'assistant' && /연락처|1877-6901/.test(String(m.content || '')));
       // "담당자 확인" 말이 목록 줄(- · •)에만 있으면 원칙 설명 같은 글이라 붙이지 않음(내부 지침 질문 답 끝에 연락처 요청이 붙던 일)
       const consultLine = reply.split('\n').some((l) => /담당자.{0,20}(확인|조율)/.test(l) && !/^\s*([-·•*]|\d+\.)\s/.test(l));
@@ -721,11 +758,11 @@ module.exports = async function handler(req, res) {
       const prevBotText = messages.filter((m) => m.role === 'assistant').map((m) => String(m.content || '')).join('\n');
       const sameItems = lastCalc && (lastCalc.items || []).length > 0 && (lastCalc.items || []).every((i) => new RegExp(`${i.servings}\\s?(인분|잔|개|명|servings?|cups?|portions?)`, 'i').test(prevBotText));
       if (leadBefore && !meta.lead && lastCalc && !sameQuote && shownOptions <= 1 && !sameItems) {
-        const phones = userTexts.match(/010[-\s.]?\d{4}[-\s.]?\d{4}|01[16789][-\s.]?\d{3,4}[-\s.]?\d{4}/g) || [];
+        const phones = own.phones;   // 남의 번호로 말한 것은 빼고
         const input = {
           contactName: '(앞 접수와 같은 손님)',
           phone: phones.length ? phones[phones.length - 1] : '',
-          email: (userTexts.match(EMAIL_RE) || [])[0] || '',   // 이메일만 준 손님(번호 없음)
+          email: own.emails[0] || '',   // 이메일만 준 손님(번호 없음)
           menu: (lastCalc.items || []).map((i) => `${i.name} ${i.servings}`).join(', '),
           region: lastCalc.region || '',
           note: '손님이 접수 뒤 견적을 바꿈(챗봇이 바뀐 견적으로 자동 전달)',
@@ -733,25 +770,28 @@ module.exports = async function handler(req, res) {
         };
         const history = messages.filter((m) => m.role === 'assistant').map((m) => m.content);
         const out = await handleLead(input, { botTexts: [...history, ...preTexts], calcs, history, sessionId });
-        meta.tools.push({ name: 'submit_lead', input, status: out.status, auto: true });
+        leadDeliveries.push(out.delivery);
+        meta.tools.push({ name: 'submit_lead', input, status: out.status, auto: true, delivery: out.delivery, fields: out.fields });
         meta.lead = true;
         leadKind = leadKind || 'update';
       }
       // 손님이 번호·이메일을 줬는데 모델이 접수(submit_lead)를 빠뜨렸으면 서버가 대신 접수 — 접수 손실 막기
       // (회귀 재생 11-26: 번호를 받고 견적만 보여 준 뒤, 다음 답에서 도구 없이 "접수해 두었어요"라고 함)
-      if (!leadBefore && !meta.lead && (PHONE_RE.test(userTexts) || EMAIL_RE.test(userTexts))) {
-        const phones = userTexts.match(new RegExp(PHONE_RE.source, 'g')) || [];
+      // 남의 번호로 말한 것만 있으면 대신 접수하지 않음(손님 연락처가 아님 — 11-27)
+      if (!leadBefore && !meta.lead && (own.phones.length || own.emails.length)) {
+        const phones = own.phones;
         const input = {
           contactName: '미기재',
           phone: phones.length ? phones[phones.length - 1] : '',
-          email: (userTexts.match(EMAIL_RE) || [])[0] || '',
+          email: own.emails[0] || '',
           menu: lastCalc ? (lastCalc.items || []).map((i) => `${i.name} ${i.servings}`).join(', ') : '',
           region: lastCalc ? lastCalc.region || '' : '',
           note: '챗봇이 접수를 빠뜨려 서버가 대신 접수함 — 성함·세부 내용은 상담 기록에서 확인',
         };
         const history = messages.filter((m) => m.role === 'assistant').map((m) => m.content);
         const out = await handleLead(input, { botTexts: [...history, ...preTexts], calcs, history, sessionId, card: { shown: cardShown || cardSkipped, skipped: cardSkipped } });
-        meta.tools.push({ name: 'submit_lead', input, status: out.status, auto: true });
+        leadDeliveries.push(out.delivery);
+        meta.tools.push({ name: 'submit_lead', input, status: out.status, auto: true, delivery: out.delivery, fields: out.fields });
         meta.lead = true;
         leadKind = leadKind || 'new';
       }
@@ -764,17 +804,33 @@ module.exports = async function handler(req, res) {
       // 모델이 접수 표시 문장을 그대로 썼으면(✅만 빠진 같은 문장) 줄째 뺌 — 서버 줄과 같은 문장이 두 번 보이던 일(FC-FS-05)
       const markTexts = LEAD_MARKS.map((t) => t.replace(/^✅\s*/, ''));
       reply = reply.split('\n').filter((l) => !markTexts.includes(l.trim())).join('\n').replace(/\n{3,}/g, '\n\n').trim();
-      if (leadKind) reply += '\n\n' + (english ? LEAD_MARK.en : leadKind === 'update' ? LEAD_MARK.koUpdate : LEAD_MARK.ko);
+      // 접수 표시는 실제 상태대로: 알림이 갔으면 "전달됐어요", 알림은 실패했지만 시트에 남았으면 "확인 후 연락", 시트도 안 됐으면 아래에서 상담 기록 저장 결과로 정함
+      const lstate = leadKind ? leadState(leadDeliveries) : null;
+      // 위 장치들이 문장을 빼다 답이 통째로 비는 일 막기(예: 모델 답이 연락처 요청 한 문장뿐 — 11-27 시험에서 빈 답이 나감)
+      if (!reply.trim()) {
+        reply = hasPhone ? (english ? 'Got it. Is there anything else you would like to add or change?' : '확인했어요. 더 알려 주실 내용이나 바꿀 부분이 있으면 말씀해 주세요.')
+          : (english ? 'Got it. Please leave a phone number or email where we can send the quote.' : '확인했어요. 견적서를 받으실 연락처(휴대폰·회사번호 또는 이메일)를 남겨 주시겠어요?');
+        meta.emptyReplyGuard = true;
+      }
+      if (leadKind) reply += '\n\n' + leadMark(lstate === 'delivered' ? 'delivered' : 'stored', leadKind, english);
+      if (lstate) meta.leadState = lstate;
       // 상담 기록은 답을 먼저 보낸 뒤 저장 (손님 대기 시간 줄이기). Vercel이 응답 뒤에도 끝까지 기다리게 waitUntil 사용,
       // 그 기능이 없는 곳(로컬 시험 서버 등)에서는 예전처럼 저장하고 나서 보냄
       // 이번 답의 비용(달러) — 대화 기록(meta.usage)에 남겨 보드에서 대화별 비용을 볼 수 있게
       const pr = PRICE[MODEL.replace(/-\d{8}$/, '')];
       if (pr) usage.usd = Math.round(((usage.input * pr.in + usage.output * pr.out + usage.cacheWrite * pr.cw + usage.cacheRead * pr.cr) / 1e6) * 1e5) / 1e5;
       meta.usage = usage;
-      const logP = logChat({ sessionId, page, userText: lastUser && lastUser.content, reply, meta }).catch(() => {});
+      const logP = logChat({ sessionId, page, userText: lastUser && lastUser.content, reply, meta }).catch(() => ({ ok: false }));
       const vctx = globalThis[Symbol.for('@vercel/request-context')];
       const ctx = vctx && typeof vctx.get === 'function' ? vctx.get() : null;
-      if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(logP); else await logP;
+      if (lstate === 'pending') {
+        // 알림도 시트도 안 된 접수: 상담 기록(보드)에 남았는지 기다려 보고, 그것도 실패면 접수됐다고 하지 않음
+        const lg = await logP;
+        if (!lg || !lg.ok) {
+          await alertFailure('error', { where: '챗봇 접수(알림·시트·상담 기록 모두 실패)', reason: '손님에게 접수 실패를 안내함', sessionId });
+          return res.status(200).json({ reply: english ? LEAD_FAIL.en : LEAD_FAIL.ko, usage, leadFailed: true });
+        }
+      } else if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(logP); else await logP;
       // 음료 구성을 묻는 답이면 화면 아래(입력칸 위)에 '음료 고르기' 버튼을 띄우게 목록을 같이 보냄
       // (대화가 길면 메뉴는 위, 답은 아래라 손님이 위아래로 오가야 했음)
       const picker = drinkPicker(reply);
@@ -783,8 +839,16 @@ module.exports = async function handler(req, res) {
 
     // 도구를 여러 번 부르다 최종 답을 못 받고 끝난 경우: 이번 요청에서 이미 접수했으면 손님이 다시 보내 중복 접수되지 않게 접수됐다고 알림
     if (leadKind) {
-      const done = english ? 'Your request has been received. Our staff will contact you soon.' : '접수는 됐어요. ' + contactWhen();
-      return res.status(200).json({ reply: done + '\n\n' + (english ? LEAD_MARK.en : leadKind === 'update' ? LEAD_MARK.koUpdate : LEAD_MARK.ko) });
+      const lstate = leadState(leadDeliveries);
+      const done = english ? 'Your request has been received. Our staff will contact you soon.' : lstate === 'delivered' ? '접수는 됐어요. ' + contactWhen() : '접수는 됐어요. 담당자가 확인 후 연락드릴게요.';
+      const doneReply = done + '\n\n' + leadMark(lstate === 'delivered' ? 'delivered' : 'stored', leadKind, english);
+      // 이 경로는 상담 기록이 빠져 있었음 — 접수가 보드에 안 보이던 일. 기록하고, 알림·시트가 모두 실패했으면 기록 결과까지 보고 안내
+      const lg = await logChat({ sessionId, page, userText: lastUser && lastUser.content, reply: doneReply, meta: Object.assign(meta, { usage, fallback: true, leadState: lstate }) }).catch(() => ({ ok: false }));
+      if (lstate === 'pending' && (!lg || !lg.ok)) {
+        await alertFailure('error', { where: '챗봇 접수(알림·시트·상담 기록 모두 실패)', reason: '손님에게 접수 실패를 안내함', sessionId });
+        return res.status(200).json({ reply: english ? LEAD_FAIL.en : LEAD_FAIL.ko, leadFailed: true });
+      }
+      return res.status(200).json({ reply: doneReply });
     }
     // 이 경로도 상담 기록에 남김(전에는 기록이 빠져 주간 점검에서도 안 보였음)
     await logChat({ sessionId, page, userText: lastUser && lastUser.content, reply: '(도구 반복 끝, 답 없음)', meta: Object.assign(meta, { usage, fallback: true }) }).catch(() => {});
