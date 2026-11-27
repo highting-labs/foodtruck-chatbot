@@ -642,6 +642,11 @@ module.exports = async function handler(req, res) {
       }
       // 출력물·현수막·배너 문의면 "상단·중앙은 기본(서비스)"을 답 첫머리에 보장(11-23 사용자 의견 — 매뉴얼만으로는 8번 중 2번 빠짐)
       if (/출력물|인쇄물|현수막|배너/.test(lastUserText) && !english && !/상단·?\s?중앙/.test(reply.split('\n').filter((l) => l.trim()).slice(0, 3).join('\n'))) reply = '상단·중앙 현수막은 기본으로 들어가요(서비스).\n\n' + reply;   // 첫 세 줄 안에 없으면(아래쪽에만 있어도) 맨 앞에
+      // 커피 세트를 고르라고 나열한 답에 세트 메뉴판 사진 보장(11-27 사용자 대화 — 매뉴얼만으로는 6번 중 1번만 붙음). 한 대화에서 한 번만
+      if (!english && (reply.match(/실속\s?세트|간편\s?세트|베이직\s?세트|클래식\s?세트/g) || []).filter((v, i, a) => a.indexOf(v) === i).length >= 2
+        && !/menu-coffee-(set|classic)-chat\.jpg/.test(reply) && !messages.some((m) => m.role === 'assistant' && typeof m.content === 'string' && /menu-coffee-set-chat\.jpg/.test(m.content))) {
+        reply += '\n\n![커피·음료 세트 메뉴판](/menu-coffee-set-chat.jpg)';
+      }
       // 대표번호는 손님이 전화·통화를 원하거나, 연락이 안 온다·급하다고 하거나, 번호를 안 남기겠다·삭제해 달라고 할 때만
       // (실제 상담 시험: 작별 인사·진행 상황 질문·이탈 손님 답 끝에 "대표번호로도 문의하실 수 있어요"가 습관처럼 붙던 일)
       const PHONE_OK = /전화|통화|연락\s?(이|을|도)?\s?(안|없|못|주)|급(해|하|한|히)|번호.{0,8}(싫|안\s?남|못\s?남|말고|부담)|남기기\s?(싫|어렵|부담)|삭제|지워|대표\s?번호|사무실\s?번호|고객\s?센터|(연락처|번호)\s?(좀|뭐|알려|어떻게|있)/;
