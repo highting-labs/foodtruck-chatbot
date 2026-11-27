@@ -349,6 +349,35 @@ test('최소 주문 금액 미달인데 고르기 전에 접수: 알림에 "손�
   assert.deepEqual(r.leads[0].fields.computed, { status: 'below_minimum', minimum: 600000, short: 450000 });
 });
 
+// ───────── 커피 세트 음료 규칙 ─────────
+test('간편세트 음료 변경 문의: 알림 상태 줄에 "음료 구성 문의"가 붙고, 견적은 그대로 계산됨', async () => {
+  const r = await run({
+    messages: [{ role: 'user', content: '간편세트 200잔 강남구 견적 주세요. 레몬에이드 대신 자몽에이드로 바꿀 수 있나요? 010-5555-0199' }],
+    script: [tool('calculate_quote', { items: [{ name: '간편세트(커피음료 4종)', servings: 200 }], region: '강남구' }),
+      tool('submit_lead', { contactName: '미기재', phone: '010-5555-0199', menu: '간편세트 200잔', drinkChoice: '변경 문의: 레몬에이드 → 자몽에이드 · 담당자 확인' }),
+      text('음료 변경은 담당자가 확인해서 알려 드릴게요.\n**합계 760,000원** (부가세 별도)')],
+  });
+  assert.equal(r.calls.sms.length, 1);
+  assert.match(r.calls.sms[0], /상태: .*음료 구성 문의 — 담당자 확인/);
+  assert.match(r.calls.sms[0], /음료 구성: 변경 문의: 레몬에이드 → 자몽에이드/);
+  assert.match(r.calls.sms[0], /견적: 760,000원/);
+  assert.equal(r.leads[0].fields.said.drinkChoice, '변경 문의: 레몬에이드 → 자몽에이드 · 담당자 확인');
+});
+
+test('음료 고르기 버튼: 베이직(7종)에만 뜨고 26종에서 고름, 간편(4종)·실속(2종)에는 안 뜸', async () => {
+  const ask = (set, line) => run({
+    messages: [{ role: 'user', content: set + ' 200잔 강남구 견적 주세요. 010-5555-0199' }],
+    script: [tool('calculate_quote', { items: [{ name: set, servings: 200 }], region: '강남구' }),
+      text('- ' + set + ' × 200잔\n  └ ' + line + '\n**합계 800,000원**\n\n음료는 기본 구성으로 잡아 둘까요? 바꾸고 싶은 음료가 있으면 말씀해 주세요.')],
+  });
+  const basic = await ask('베이직세트(커피음료 7종)', '아메리카노·카페라떼·복숭아아이스티·핫초코·유자차·얼그레이밀크티·애플캐모마일');
+  assert.equal(basic.body.picker.count, 7);
+  assert.equal(basic.body.picker.options.length, 26);
+  assert.ok(['카라멜마끼아또', '유자차', '핫초코', '말차라떼', '생강레몬티'].every((d) => basic.body.picker.options.includes(d)));
+  assert.equal((await ask('간편세트(커피음료 4종)', '아메리카노·핫초코·유자차·애플캐모마일')).body.picker, undefined);
+  assert.equal((await ask('실속세트(커피음료 2종)', '아메리카노·유자차')).body.picker, undefined);
+});
+
 // ───────── 알림·기록 실패 ─────────
 const LEAD_TURN = {
   messages: [{ role: 'user', content: '베이직세트 200잔 강남구 견적 주세요. 010-5555-0199' }],
