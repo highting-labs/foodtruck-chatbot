@@ -84,7 +84,7 @@ const tools = [
         payMethod: { type: 'string', description: '결제 방식: 세금계산서 / 카드 / 현금영수증 / 계좌이체 중 고객이 그걸로 하겠다고 정한 것만. "카드 되나요?"처럼 묻기만 했으면 비우고 note에 "카드 결제 문의"' },
         eventDate: { type: 'string', description: '행사 날짜 YYYY-MM-DD (오늘 날짜 기준으로 바꿔서). 모르면 비움' },
         serveTime: { type: 'string', description: '배식 시간 HH:MM~HH:MM (예: 11:00~14:00). 모르면 비움' },
-        drinkChoice: { type: 'string', description: '커피 세트 음료 구성: 손님이 고른 음료, 또는 고르지 않았으면 "기본 구성(임시) · 담당자 확인". 커피 세트가 없으면 비움' },
+        drinkChoice: { type: 'string', description: '커피 세트 음료 구성. 베이직(7종): 손님이 고른 음료 / 기본으로 확정했으면 "기본 구성(확정): …" / 고르지 않았으면 "기본 구성(임시) · 담당자 확인". 실속(2종)·간편(4종): "기본 구성(확정): …". 간편 음료 변경 요청이나 5종·6종 같은 문의가 있었으면 "변경 문의: (내용) · 담당자 확인". 클래식(15종): 고른 음료 또는 "15종 미정 · 담당자와 정하기". 커피 세트가 없으면 비움' },
         callTime: { type: 'string', description: '손님이 먼저 말한 통화 편한 시간대(예: 오후 2~5시). 묻지 말고 손님이 말했을 때만' },
         isUpdate: { type: 'boolean', description: '이 대화에서 submit_lead를 이미 한 번 불렀고, 정보를 보태려고 다시 부르는 경우에만 true. 처음 부르면 넣지 않음' },
       },
@@ -219,6 +219,8 @@ async function handleLead(input, ctx = {}) {
   const nth = history.filter((h) => endsWithLeadMark(h)).length;   // 이 대화에서 앞서 접수된 횟수
   const tags = [auto ? '견적 변경(자동 전달)' : p.isUpdate ? '정보 추가' : '신규'];
   if (p.contactName === '미기재' && !org) tags.push('이름 미확인');
+  // 간편세트 음료 변경 요청, 5종·6종 같은 문의 — 챗봇은 "담당자가 확인해서 알려 드린다"고만 답했으므로 담당자가 답해야 함(사용자 결정 11-27)
+  if (/변경 문의/.test(p.drinkChoice || '')) tags.push('음료 구성 문의 — 담당자 확인');   // 모델이 '기본 구성(확정): … / 변경 문의: …'처럼 뒤에 붙여 쓰기도 함
   if (/최소 금액 미달/.test(quote)) tags.push('최소 금액 미달');
   const allText = Object.values(p).filter((v) => typeof v === 'string').join(' ');
   // 사무실 답(11-20 질문 9): "그냥 전화 주세요" 손님은 정보와 함께 담당자에게 → 상태 줄에 표시
@@ -333,11 +335,11 @@ async function handleLead(input, ctx = {}) {
   // 값의 출처 구분(보드 상담 기록 meta에만 덧붙임 — 기존 칸은 그대로): 손님이 말한 값 / 계산기가 낸 값 / 챗봇이 기본으로 둔 값 / 담당자가 확인할 것
   const said = {};
   ['contactName', 'company', 'contactPerson', 'phone', 'email', 'eventDate', 'serveTime', 'address', 'region', 'menu', 'payMethod', 'callTime'].forEach((k) => { if (p[k] && p[k] !== '미기재' && !auto) said[k] = p[k]; });
-  if (p.drinkChoice && !/^기본 구성/.test(p.drinkChoice)) said.drinkChoice = p.drinkChoice;
+  if (p.drinkChoice && !/^기본 구성\(임시\)/.test(p.drinkChoice)) said.drinkChoice = p.drinkChoice;
   const assumed = [];
   if (power.startsWith('확인')) assumed.push('전기 220V 연결 가능');
   if (banner.startsWith('확인')) assumed.push('현수막 상단·중앙만');
-  if (/^기본 구성/.test(p.drinkChoice || '')) assumed.push('음료 기본 구성');
+  if (/^기본 구성\(임시\)/.test(p.drinkChoice || '')) assumed.push('음료 기본 구성');
   if (lc && !ci.serviceHours) assumed.push('배식 3시간');
   const lastAnyCalc = calcs[calcs.length - 1];
   const computed = lc ? { subtotal: lc.subtotal, foodValue: lc.foodValue, travel: (lc.costs || {}).출장비, topUp: (lc.costs || {}).최소주문맞춤, trucks: lc.trucks || 1 }
@@ -372,7 +374,7 @@ function contactWhen() {
 function drinkPicker(reply) {
   const t = String(reply || '');
   if (!/음료는 기본 구성|바꾸고 싶은 음료|원하시는 음료로|음료를 골라|음료 구성/.test(t) || !/\?|말씀해 주세요|정하셔도/.test(t)) return null;
-  const m = t.match(/\(커피음료\s*([247])종\)[^\n]*\n\s*└\s*([^\n]+)/);
+  const m = t.match(/\(커피음료\s*(7)종\)[^\n]*\n\s*└\s*([^\n]+)/);   // 베이직(7종)만 — 2종은 변경 불가, 4종은 담당자 확인(사용자 결정 11-27)
   if (!m) return null;
   const count = Number(m[1]);
   const base = (x) => x.replace(/\(아이스\)/g, '').trim();
