@@ -147,6 +147,14 @@ test('접수 검사: 자릿수·손님 글에 없는 번호·이메일 모양', 
   assert.equal(vetContact({ phone: '010-0000-1105' }, ko).status, null);
   assert.equal(vetContact({ phone: '010-0000-1106' }, ko).status, 'check_phone');
   assert.equal(vetContact({ phone: '010-1234-5678' }, [{ role: 'user', content: '010 일이삼사 5678' }]).status, null);
+  // 국제 형식(+82)으로 준 번호는 정상 번호(11-27 고정 세트 FS-14: 처음에 거절됨)
+  const intl = [{ role: 'user', content: 'My number is +82 10 5555 0199' }];
+  assert.equal(vetContact({ phone: '+82 10 5555 0199' }, intl).status, null);
+  assert.equal(vetContact({ phone: '010-5555-0199' }, intl).status, null);
+  assert.equal(vetContact({ phone: '+82-10-5555-0199' }, [{ role: 'user', content: '010-5555-0199' }]).status, null);
+  assert.equal(vetContact({ phone: '+82 (0)10 5555 0199' }, [{ role: 'user', content: '+82 (0)10 5555 0199' }]).status, null);
+  assert.equal(vetContact({ phone: '+82 10 5555 019' }, [{ role: 'user', content: '+82 10 5555 019' }]).status, 'check_phone');
+  assert.deepEqual(ownContacts(intl).phones, ['+82 10 5555 0199']);
   const ok = [{ role: 'user', content: '010 5555 0199 입니다' }];
   assert.equal(vetContact({ phone: '010-5555-0199' }, ok).status, null);
   assert.equal(vetContact({ phone: '02-123-4567' }, [{ role: 'user', content: '관리실 번호는 02-123-4567' }]).status, 'confirm_contact');
@@ -232,6 +240,17 @@ test('한글로 적은 번호: 모델이 숫자로 바꿔 접수하면 접수됨
   assert.equal(r.calls.sms.length, 1);
   assert.match(r.calls.sms[0], /연락처: 010-0000-1105/);
   assert.equal(lastLine(r.reply), MARK);
+});
+
+test('국제 형식(+82) 번호: 모델이 그대로 넣어도, 010으로 바꿔 넣어도 접수됨', async () => {
+  for (const phone of ['+82 10 5555 0199', '010-5555-0199']) {
+    const r = await run({
+      messages: [{ role: 'user', content: 'I need a quote for 200 cups of the basic coffee set in Gangnam. My number is +82 10 5555 0199' }],
+      script: [tool('calculate_quote', BASIC200), tool('submit_lead', { contactName: 'N/A', phone, menu: 'Basic set 200 cups' }), text('Your request is in.')],
+    });
+    assert.equal(r.calls.sms.length, 1, phone);
+    assert.equal(r.leads[0].status, 'submitted', phone);
+  }
 });
 
 test('남의 번호만 말한 대화: 서버가 대신 접수하지 않고, 연락처 카드 단계 그대로', async () => {
