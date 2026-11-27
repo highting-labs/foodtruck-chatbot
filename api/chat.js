@@ -495,6 +495,8 @@ module.exports = async function handler(req, res) {
           if (tu.name === 'calculate_quote') {
             const cin = Object.assign({}, tu.input, tu.input && tu.input.eventDate ? { eventDate: fixPastDate(tu.input.eventDate).date } : {});   // 지난 날짜면 다음 해로(날짜 여유 조회용)
             // 최소 주문 금액 맞춤은 손님 동의가 있어야 함: 앞선 답에서 맞춤을 물어본 적이 없으면 동의로 보지 않음(모델이 혼자 true를 넣는 것 막기)
+            // 현수막을 물은 적도, 손님이 말한 적도 없는데 모델이 넣은 좌·우 현수막 값은 뺌 → 담당자 알림에 "확인 필요"로 남고 챗봇이 한 번 묻게(11-27: 묻지 않고 "상단·중앙만"으로 접수됨)
+            if (Array.isArray(cin.sideBanners) && !/현수막|배너|banner|출력물|인쇄물|옆면/i.test(userAll) && !messages.some((m) => m.role === 'assistant' && typeof m.content === 'string' && /좌·우 옆면|X배너에도|banner/i.test(m.content))) delete cin.sideBanners;
             if (cin.topUpAgreed && !messages.some((m) => m.role === 'assistant' && typeof m.content === 'string' && /최소 주문 금액 맞춤|minimum order/i.test(m.content))) cin.topUpAgreed = false;
             out = await calculateQuote(cin);
             // 영어 손님이면 장소 안내 자리에 정해 둔 영어 문구를 넣음(매뉴얼 지시만으로는 한국어 원문이 가끔 그대로 나감)
