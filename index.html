@@ -1068,7 +1068,8 @@ document.getElementById('calc').onclick=()=>{
     function submit(){
       if (busy) return;
       const v = inp.value.trim();
-      const ok = kind === 'mail' ? /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(v) : /^0\d{8,10}$/.test(v.replace(/\D/g, ''));
+      const d = v.replace(/\D/g, '');
+      const ok = kind === 'mail' ? /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(v) : /^0\d{8,10}$/.test(d) && !(/^010/.test(d) && d.length !== 11);   // 010은 11자리
       if (!ok) { err.textContent = kind === 'mail' ? '이메일 주소를 확인해 주세요. (예: name@company.co.kr)' : '번호를 확인해 주세요. (예: 010-1234-5678, 회사번호 02-123-4567)'; inp.focus(); return; }
       send(CARD_SUBMIT + v);
     }

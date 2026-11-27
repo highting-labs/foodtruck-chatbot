@@ -100,7 +100,13 @@ const RANGE_LINE = { ko: '항목별 금액과 견적서는 아래 [견적서 받
 const SKIP_TEXT = /^\s*(번호 없이 대략 금액만 보기|나중에 할게요, 대략 금액만 볼게요|See a rough range without contact|Maybe later, just show me a rough range)\s*$/;
 // 카드 버튼 대신 손님이 직접 "번호 남기기 싫어요, 금액만" 같이 쳐도 건너뛴 것으로 봄(같은 카드를 두 번 띄우지 않게)
 const SKIP_SAID = /번호.{0,8}(싫|안\s?남|못\s?남|말고|부담)|남기기\s?(싫|어렵|부담)|연락처\s?(없이|는\s?싫|싫|안\s?남|못\s?남)|(그냥|일단|대략)\s?(금액|가격)|(금액|가격)만\s?(알려|보여|볼게|궁금)|no (phone|contact)|without (my )?(phone|contact)|just (the )?(price|range)/i;
-const PHONE_RE = /01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}|0[2-6]\d?[-\s.]?\d{3,4}[-\s.]?\d{4}/;   // 휴대폰 + 회사 유선(02·031 등)
+const PHONE_RE = /010[-\s.]?\d{4}[-\s.]?\d{4}|01[16789][-\s.]?\d{3,4}[-\s.]?\d{4}|0[2-6]\d?[-\s.]?\d{3,4}[-\s.]?\d{4}/;   // 휴대폰 + 회사 유선(02·031 등)
+// 접수에 적힌 휴대폰 번호가 이상한지: 010인데 11자리가 아니거나, 손님 글에 그 숫자가 없음(이메일이 있으면 그걸로 연락 가능하니 통과)
+const badPhone = (inp, userText) => {
+  const d = String((inp || {}).phone || '').replace(/\D/g, '');
+  if (!d || String((inp || {}).email || '').trim()) return false;
+  return (/^010/.test(d) && d.length !== 11) || (/^01/.test(d) && !String(userText || '').replace(/\D/g, '').includes(d));
+};
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
 const man = (n, up) => (up ? Math.ceil(n / 10000) : Math.floor(n / 10000)) * 10000;   // 만 원 단위로
 // 건너뛴 손님에게 보여 줄 대략 금액: 합계를 만 원 단위로 올린 한 금액(범위는 쓰지 않음 — 대표 결정 11-26). 항목별 금액은 연락처를 남긴 뒤에
@@ -232,6 +238,21 @@ async function handleLead(input, ctx = {}) {
   const lc = [...calcs].reverse().find((c) => c && c.status === 'ok');
   // 음식값이 60만 원보다 적어 모자란 금액을 더한 견적 → 담당자가 견적서에 같은 줄로 옮기게(대표 확정 11-25)
   if (lc && lc.costs && lc.costs.최소주문맞춤 > 0) tags.push(`최소 주문 금액 맞춤 +${won(lc.costs.최소주문맞춤)}원(음식값 ${won(lc.foodValue || 0)}원, 손님 동의)`);
+  // 최소 주문 금액에 못 미쳤는데 손님이 맞춤/수량 늘리기를 고르기 전에 접수된 건 → 담당자가 첫 연락에서 물어보게(11-27)
+  if (!lc) {
+    const lastAny = calcs[calcs.length - 1];
+    let short = lastAny && lastAny.status === 'below_minimum' && lastAny.short ? `${won(lastAny.short)}원` : '';
+    if (!short && !calcs.length) {
+      const bt = ctx.botTexts || [];
+      for (let i = bt.length - 1; i >= 0; i--) {
+        const t = String(bt[i] || '');
+        if (/\*\*(합계|Total)/i.test(t)) break;
+        const m = /최소 주문/.test(t) && t.match(/(\d[\d,]*\s?만?\s?원)\s*(?:이|가)?\s*모자라/);
+        if (m) { short = m[1]; break; }
+      }
+    }
+    if (short) tags.push(`최소 주문 금액 미달(${short} 모자람) · 손님 선택 전(맞춤/수량 늘리기)`);
+  }
   const nowNums = lc ? [lc.subtotal] : null;
   const fmt = (ns) => (ns.length > 1 ? '약 ' : '') + ns.map(won).join('~') + '원';
   // 이번 견적이 앞서 보여 준 안 중 하나와 같으면 변경 아님(날짜만 고친 추가 접수 등)
@@ -370,7 +391,7 @@ module.exports = async function handler(req, res) {
     // 호출 횟수 제한 — 걸리면 AI를 부르지 않고 안내만 (손님 화면엔 보통 답처럼 보임)
     const rate = await checkRate('chat', req);
     if (!rate.ok) return res.status(200).json({ reply: limitMessage(rate.why), limited: rate.why });
-    const lastSaysPhone = /01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/.test(messages[messages.length - 1].content) || EMAIL_RE.test(messages[messages.length - 1].content);   // 연락처를 남기는 말은 길어도 받아서 접수
+    const lastSaysPhone = /010[-\s.]?\d{4}[-\s.]?\d{4}|01[16789][-\s.]?\d{3,4}[-\s.]?\d{4}/.test(messages[messages.length - 1].content) || EMAIL_RE.test(messages[messages.length - 1].content);   // 연락처를 남기는 말은 길어도 받아서 접수
     if (messages.filter(m => m.role === 'user').length > MAX_USER_TURNS && !lastSaysPhone) {
       return res.status(200).json({ reply: '대화가 길어져서 여기부터는 담당자가 직접 도와드리는 게 정확해요. 대표번호 1877-6901로 전화 주시거나, 성함과 연락처를 남겨 주시면 담당자가 연락드릴게요. 새로 상담하시려면 위의 ↺ 새로 시작을 눌러 주세요.', limited: 'turns' });
     }
@@ -498,6 +519,10 @@ module.exports = async function handler(req, res) {
               out = { status: 'below_minimum', menu: out.items.map((x) => `${x.label} ${x.qty}인분`).join(', '), minimum: out.minimum, short: out.short,
                 message: `[봇에게] 음식값이 최소 주문 금액(음식값 ${w(out.minimum)}원, 부가세 별도, 출장비 따로)보다 ${w(out.short)}원 모자라요. 연락처를 받기 전이라 항목 금액(단가 × 수량 — 금액)과 음식값 합계는 쓰지 말고, 모자란 금액만 알려 주세요. 손님 동의 없이 금액을 더하지 말고 이렇게 물어보세요: "최소 주문은 음식값 ${w(out.minimum)}원부터인데, 말씀하신 메뉴는 ${w(out.short)}원이 모자라요. ① 메뉴·수량은 그대로 두고 모자란 ${w(out.short)}원을 '최소 주문 금액 맞춤'으로 더해 진행하거나 ② 메뉴나 수량을 늘려 맞추실 수 있어요. 어떻게 할까요?" 손님이 ①에 동의하면 topUpAgreed:true를 넣어 다시 계산하고, ②면 바꾼 메뉴·수량으로 다시 계산하세요. 연락처를 묻는 문장은 쓰지 마세요(화면이 연락처 카드를 띄움). '보정'이라는 말은 쓰지 말 것. 손님 언어로 답하세요.` };
             }
+          } else if (tu.name === 'submit_lead' && badPhone(tu.input, userAll)) {
+            // 010 번호는 11자리여야 하고, 손님이 쓴 숫자 그대로여야 함 — 아니면 접수하지 않고 다시 확인(11-27: 0101111111이 접수됨, 모델이 숫자를 보태 11자리로 만들기도 함)
+            out = { status: 'check_phone', message: '[봇에게] 휴대폰 번호 자릿수가 맞지 않아 접수하지 않았어요(010 번호는 11자리). "번호가 한 자리 빠진 것 같아요. 다시 한 번 확인해 주시겠어요?"처럼 다시 물어보고, 접수했다고 말하지 마세요.' };
+            meta.tools.push({ name: 'submit_lead', input: cleanLead(tu.input), status: 'check_phone' });
           } else if (tu.name === 'submit_lead' && !String((tu.input || {}).phone || '').trim() && !String((tu.input || {}).email || '').trim()) {
             out = { status: 'need_contact', message: '[봇에게] 번호나 이메일이 없어 접수하지 않았어요. 연락처를 받은 뒤에 다시 부르세요.' };
             meta.tools.push({ name: 'submit_lead', input: cleanLead(tu.input), status: 'need_contact' });
@@ -694,7 +719,7 @@ module.exports = async function handler(req, res) {
       const prevBotText = messages.filter((m) => m.role === 'assistant').map((m) => String(m.content || '')).join('\n');
       const sameItems = lastCalc && (lastCalc.items || []).length > 0 && (lastCalc.items || []).every((i) => new RegExp(`${i.servings}\\s?(인분|잔|개|명|servings?|cups?|portions?)`, 'i').test(prevBotText));
       if (leadBefore && !meta.lead && lastCalc && !sameQuote && shownOptions <= 1 && !sameItems) {
-        const phones = userTexts.match(/01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/g) || [];
+        const phones = userTexts.match(/010[-\s.]?\d{4}[-\s.]?\d{4}|01[16789][-\s.]?\d{3,4}[-\s.]?\d{4}/g) || [];
         const input = {
           contactName: '(앞 접수와 같은 손님)',
           phone: phones.length ? phones[phones.length - 1] : '',
