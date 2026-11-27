@@ -378,6 +378,28 @@ test('음료 고르기 버튼: 베이직(7종)에만 뜨고 26종에서 고름, 
   assert.equal((await ask('실속세트(커피음료 2종)', '아메리카노·유자차')).body.picker, undefined);
 });
 
+test('커피 세트 구성: 보드 DB 비고가 예전 것이어도 사무실 기본 구성으로 안내(가격은 DB 그대로)', async () => {
+  const { getMenuData, seasonNote } = require('../lib/menu-source.js');
+  const d = await getMenuData();
+  const note = (n) => d.menus.find((m) => m.name === n).note;
+  assert.match(note('실속세트(커피음료 2종)'), /동절기: 아메리카노·유자차$/);
+  assert.match(note('베이직세트(커피음료 7종)'), /동절기: 아메리카노·카페라떼·바닐라라떼·애플캐모마일·자몽허니블랙티·핫초코·유자차$/);
+  assert.match(note('베이직세트(커피음료 7종)'), /^하절기: .*애플망고에이드 \//);
+  for (const n of ['실속세트(커피음료 2종)', '간편세트(커피음료 4종)', '베이직세트(커피음료 7종)', '클래식세트(커피음료 15종+)']) {
+    const kinds = Number(n.match(/(\d+)종/)[1]);
+    for (const season of ['하절기', '동절기']) {
+      const list = note(n).split(' / ').find((x) => x.startsWith(season)).replace(season + ': ', '').split('·');
+      assert.equal(list.length, kinds, n + ' ' + season);
+      assert.equal(new Set(list).size, kinds, n + ' ' + season + ' 중복');
+      // 모든 음료가 고를 수 있는 26종 안에 있음
+      const { CLASSIC_DRINKS } = require('../lib/knowledge.js');
+      for (const x of list) assert.ok(CLASSIC_DRINKS.includes(x), n + ' ' + season + ': ' + x);
+    }
+  }
+  assert.equal(d.menus.find((m) => m.name === '베이직세트(커피음료 7종)').price, 3500);
+  assert.ok(!seasonNote(note('실속세트(커피음료 2종)')).includes('/'));
+});
+
 // ───────── 알림·기록 실패 ─────────
 const LEAD_TURN = {
   messages: [{ role: 'user', content: '베이직세트 200잔 강남구 견적 주세요. 010-5555-0199' }],
